@@ -7,14 +7,10 @@ import {
   addMonths,
   subMonths,
   formatISO,
-  startOfQuarter,
-  endOfQuarter,
-  addQuarters,
-  subQuarters,
 } from "date-fns";
 
-export type ViewName = "week" | "month" | "quarter";
-export const VIEWS: ViewName[] = ["week", "month", "quarter"];
+export type ViewName = "week" | "month";
+export const VIEWS: ViewName[] = ["week", "month"];
 
 const WEEK_OPTS = { weekStartsOn: 0 as const }; // Sunday
 
@@ -27,8 +23,6 @@ export function rangeForView(view: ViewName, anchor: Date): { start: Date; end: 
       const me = endOfMonth(anchor);
       return { start: startOfWeek(ms, WEEK_OPTS), end: endOfWeek(me, WEEK_OPTS) };
     }
-    case "quarter":
-      return { start: startOfQuarter(anchor), end: endOfQuarter(anchor) };
   }
 }
 
@@ -38,8 +32,6 @@ export function shiftAnchor(view: ViewName, anchor: Date, dir: 1 | -1): Date {
       return addDays(anchor, dir * 7);
     case "month":
       return dir === 1 ? addMonths(anchor, 1) : subMonths(anchor, 1);
-    case "quarter":
-      return dir === 1 ? addQuarters(anchor, 1) : subQuarters(anchor, 1);
   }
 }
 

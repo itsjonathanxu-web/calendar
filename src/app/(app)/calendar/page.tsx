@@ -10,7 +10,6 @@ import {
 import { rangeForView, shiftAnchor, monthDays, VIEWS, type ViewName } from "@/lib/calendar/views";
 import { WeekGrid } from "@/components/calendar/WeekGrid";
 import { MonthGrid } from "@/components/calendar/MonthGrid";
-import { QuarterGrid } from "@/components/calendar/QuarterGrid";
 import { FilterSidebar } from "@/components/calendar/FilterSidebar";
 import { ChatToggle } from "@/components/calendar/ChatToggle";
 import { NewEventButton } from "@/components/calendar/NewEventButton";
@@ -18,7 +17,6 @@ import { NewEventButton } from "@/components/calendar/NewEventButton";
 const VIEW_LABEL: Record<ViewName, string> = {
   week: "Week",
   month: "Month",
-  quarter: "Quarter",
 };
 
 function parseView(v: string | undefined): ViewName {
@@ -157,10 +155,6 @@ export default async function CalendarPage({
     }));
 
   const accountCount = await db.account.count();
-  const projects = await db.project.findMany({
-    where: { dueDate: { not: null } },
-    orderBy: { dueDate: "asc" },
-  });
 
   const prev = isoDate(shiftAnchor(view, anchor, -1));
   const next = isoDate(shiftAnchor(view, anchor, 1));
@@ -168,7 +162,6 @@ export default async function CalendarPage({
 
   const heading = (() => {
     if (view === "month") return format(anchor, "MMMM yyyy");
-    if (view === "quarter") return `Q${Math.floor(anchor.getMonth() / 3) + 1} ${format(anchor, "yyyy")}`;
     // week
     const sameMonth = start.getMonth() === end.getMonth();
     return sameMonth ? format(start, "MMMM yyyy") : `${format(start, "MMM")} – ${format(end, "MMM yyyy")}`;
@@ -261,7 +254,7 @@ export default async function CalendarPage({
             calendars={calendarOptions}
             detailsById={detailsById}
           />
-        ) : view === "month" ? (
+        ) : (
           <MonthGrid
             days={monthDays(anchor).map((d) => localDayKey(d))}
             blocks={blocks.map((b) => ({
@@ -272,23 +265,6 @@ export default async function CalendarPage({
             monthAnchor={isoDate(anchor)}
             calendars={calendarOptions}
             detailsById={detailsById}
-          />
-        ) : (
-          <QuarterGrid
-            start={start}
-            end={end}
-            projects={projects
-              .filter((p) => p.dueDate)
-              .map((p) => ({
-                id: p.id,
-                name: p.name,
-                color: p.color,
-                start: p.createdAt,
-                due: p.dueDate as Date,
-              }))}
-            dueMarkers={blocks
-              .filter((b) => b.allDay)
-              .map((b) => ({ id: b.id, title: b.title, color: b.color, date: b.start }))}
           />
         )}
       </div>

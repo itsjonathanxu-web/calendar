@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, FolderKanban, Settings, LogOut } from "lucide-react";
+import { CalendarDays, Settings, LogOut } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 const items = [
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
