@@ -102,11 +102,28 @@ export function MonthGrid({
     if (!ev) return;
     const oldStart = new Date(ev.start);
     const oldEnd = new Date(ev.end);
-    const newStart = new Date(day);
-    newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
     const dur = oldEnd.getTime() - oldStart.getTime();
+
+    let newStart: Date;
+    if (ev.allDay) {
+      // Pin to UTC midnight of the target calendar day so the event renders
+      // on that one day regardless of the viewer's timezone.
+      newStart = new Date(Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0));
+    } else {
+      newStart = new Date(day);
+      newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+    }
     const newEnd = new Date(newStart.getTime() + dur);
-    if (newStart.toDateString() === oldStart.toDateString()) return;
+
+    // Compare by calendar date in the same frame as `day` so we don't bail
+    // early when the underlying timestamp differs but the displayed date doesn't.
+    const oldKey = ev.allDay
+      ? oldStart.toISOString().slice(0, 10)
+      : `${oldStart.getFullYear()}-${oldStart.getMonth()}-${oldStart.getDate()}`;
+    const newKey = ev.allDay
+      ? newStart.toISOString().slice(0, 10)
+      : `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
+    if (oldKey === newKey) return;
     try {
       await fetch("/api/events/update", {
         method: "POST",
@@ -124,12 +141,28 @@ export function MonthGrid({
   }
 
   function blocksForDay(d: Date): SerBlock[] {
-    const ds = startOfDay(d);
+    // Compare by calendar-date string so allDay events stored at UTC midnight
+    // don't accidentally appear on the previous local day (Toronto = UTC-4
+    // would otherwise render midnight UTC May 7 as 8pm May 6).
+    const cellKey = format(d, "yyyy-MM-dd");
     return blocks
       .filter((b) => {
-        const bs = startOfDay(new Date(b.start));
-        const be = startOfDay(new Date(b.end));
-        return bs <= ds && be >= ds;
+        if (taskMode && detailsById[b.id]?.section !== "tasks") return false;
+        const startD = new Date(b.start);
+        const endD = new Date(b.end);
+        if (b.allDay) {
+          // Use UTC calendar date — that's the date the event was tagged with
+          // regardless of viewer timezone. End is exclusive (iCal-style).
+          const startKey = startD.toISOString().slice(0, 10);
+          const endKey = endD.toISOString().slice(0, 10);
+          // Inclusive end fallback for events stored as 23:59:59 same-day
+          if (startKey === endKey) return startKey === cellKey;
+          return startKey <= cellKey && endKey > cellKey;
+        }
+        // Timed: use local startOfDay window
+        const ds = startOfDay(d);
+        const dayEnd = new Date(ds.getTime() + 86400_000);
+        return startD < dayEnd && endD > ds;
       })
       .sort((a, b) => +new Date(a.start) - +new Date(b.start));
   }
