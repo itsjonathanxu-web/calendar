@@ -67,7 +67,7 @@ export async function FilterSidebar() {
   if (all.length === 0) return null;
 
   return (
-    <aside className="glass-subtle w-56 shrink-0 border-r border-[var(--color-border)] overflow-y-auto">
+    <aside className="filter-sidebar glass-subtle w-56 shrink-0 border-r border-[var(--color-border)] overflow-y-auto">
       <div className="p-2 space-y-5">
         <div className="px-1">
           <TaskModeToggle />

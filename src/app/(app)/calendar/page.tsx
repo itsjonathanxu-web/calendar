@@ -177,10 +177,11 @@ export default async function CalendarPage({
     <div className="h-full flex">
       <FilterSidebar />
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="glass-subtle flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2.5">
-          <div className="flex items-center gap-3">
-            <h1 className="text-base font-semibold tracking-tight">{heading}</h1>
-            <div className="flex items-center gap-1 text-[var(--color-fg-muted)]">
+        <header className="glass-subtle flex flex-wrap items-center justify-between gap-y-2 border-b border-[var(--color-border)] pl-4 lg:pl-4 pr-3 py-2.5">
+          {/* Pad the left side so the mobile hamburger (top-2 left-2) doesn't sit over the heading */}
+          <div className="flex items-center gap-2 lg:gap-3 min-w-0 ml-20 lg:ml-0">
+            <h1 className="text-sm sm:text-base font-semibold tracking-tight truncate">{heading}</h1>
+            <div className="flex items-center gap-1 text-[var(--color-fg-muted)] shrink-0">
               <Link
                 aria-label="Previous"
                 href={`/calendar?view=${view}&w=${prev}`}
@@ -210,7 +211,7 @@ export default async function CalendarPage({
             />
           </div>
 
-          <div className="flex items-center gap-1 text-xs">
+          <div className="flex items-center gap-1 text-xs flex-wrap justify-end">
             {VIEWS.map((v) => (
               <Link
                 key={v}
@@ -231,7 +232,7 @@ export default async function CalendarPage({
               </div>
             )}
             {accountCount > 0 && (
-              <form action="/api/sync/all" method="post" className="ml-1">
+              <form action="/api/sync/all" method="post" className="ml-1 desktop-only">
                 <button className="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 hover:bg-[var(--color-fg)]/[0.04]">
                   <RefreshCw size={12} /> Sync
                 </button>

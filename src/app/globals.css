@@ -59,11 +59,76 @@ body.chat-open {
   -webkit-backdrop-filter: blur(16px);
 }
 
-/* Event tile — color comes through but muted, glass over top */
+/* Event tile — color comes through but muted, glass over top.
+   Distinctive shape: square corners with one rounded edge + a prominent
+   left color stripe, so it doesn't read as iCalendar's default rounded box. */
 .event-tile {
+  position: relative;
   backdrop-filter: blur(8px) saturate(140%);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 1px 3px rgba(0, 0, 0, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 1px 3px rgba(0, 0, 0, 0.25);
+  border-radius: 4px 8px 8px 4px;
+  border-left: 2px solid rgba(255, 255, 255, 0.45);
+}
+.event-tile::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.06));
+}
+
+/* ─── Mobile drawer behavior ───────────────────────────────────────────────
+   On screens narrower than the lg breakpoint (1024px), the left nav and the
+   calendar filter sidebar slide off-screen by default and re-emerge when a
+   body class flips. Two separate flags so the user can have nav OR filter
+   open independently (one wins; the other closes via the same backdrop).
+*/
+@media (max-width: 1023px) {
+  .app-sidebar,
+  .filter-sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: 16rem;
+    transform: translateX(-105%);
+    transition: transform 0.22s ease-out;
+    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.5);
+  }
+  body.nav-open .app-sidebar,
+  body.filters-open .filter-sidebar {
+    transform: translateX(0);
+  }
+  .mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 55;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s;
+  }
+  body.nav-open .mobile-backdrop,
+  body.filters-open .mobile-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+/* The backdrop never appears on desktop; nav and filter sit inline. */
+@media (min-width: 1024px) {
+  .mobile-backdrop,
+  .mobile-only {
+    display: none !important;
+  }
+}
+@media (max-width: 1023px) {
+  .desktop-only {
+    display: none !important;
+  }
 }
 
 /* Hide the default scrollbar visual so the glass reads cleaner */

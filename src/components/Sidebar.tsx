@@ -15,7 +15,7 @@ const items = [
 export function Sidebar() {
   const pathname = usePathname();
   return (
-    <aside className="glass w-56 shrink-0 flex flex-col">
+    <aside className="app-sidebar glass w-56 shrink-0 flex flex-col">
       <div className="px-5 py-4 border-b border-[var(--color-border)]">
         <div className="text-sm font-semibold tracking-tight">Calendar</div>
         <div className="text-xs text-[var(--color-fg-muted)]">Notion · Google · Apple</div>
