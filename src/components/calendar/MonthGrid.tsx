@@ -48,6 +48,13 @@ export function MonthGrid({
   const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const [dialog, setDialog] = useState<DialogMode>(null);
   const [overflowKey, setOverflowKey] = useState<string | null>(null);
+  // Apple-style mobile detail: tapping a cell selects it; the detail list
+  // below shows that day's events with full titles + times. Defaults to today
+  // (or the first day of the visible month if today is out of view).
+  const [selectedDay, setSelectedDay] = useState<Date>(() => {
+    const exists = dayDates.find((d) => isSameDay(d, today));
+    return exists ?? dayDates[0];
+  });
   const router = useRouter();
 
   function isWritable(eventId: string): boolean {
@@ -251,9 +258,11 @@ export function MonthGrid({
               const visible = items.slice(0, 4);
               const hidden = items.length - visible.length;
               const isHoverTarget = taskMode && hoverDayKey === cellKey;
+              const isSelected = isSameDay(d, selectedDay);
               return (
                 <div
                   key={di}
+                  onClick={() => setSelectedDay(d)}
                   onDoubleClick={() => openCreate(d)}
                   onDragOver={(e) => {
                     if (!taskMode || !draggingId.current) return;
@@ -273,34 +282,45 @@ export function MonthGrid({
                     if (id) moveTaskToDay(id, d);
                   }}
                   className={cn(
-                    "border-l border-[var(--color-border)] first:border-l-0 px-1.5 py-1 min-h-0 overflow-visible relative group transition-colors",
+                    "border-l border-[var(--color-border)] first:border-l-0 px-1.5 py-1 min-h-0 overflow-visible relative group transition-colors cursor-pointer lg:cursor-default",
                     !inMonth && "bg-[var(--color-fg)]/[0.02] text-[var(--color-fg-muted)]",
                     isHoverTarget && "bg-white/[0.06] ring-1 ring-inset ring-white/30",
                   )}
                 >
-                  <div className="flex items-center justify-between mb-0.5">
+                  {/* Mobile: centered day number + color pill below. Desktop: top-left number with hover-add */}
+                  <div className="flex flex-col items-center lg:items-stretch lg:flex-row lg:justify-between mb-0.5">
                     <div
                       className={cn(
-                        "text-xs",
+                        "text-sm lg:text-xs font-semibold lg:font-normal inline-flex items-center justify-center",
                         isToday
-                          ? "inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-medium"
-                          : inMonth
-                            ? "text-[var(--color-fg)]"
-                            : "text-[var(--color-fg-muted)]",
+                          ? "w-7 h-7 lg:w-5 lg:h-5 rounded-full bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+                          : isSelected
+                            ? "w-7 h-7 lg:w-5 lg:h-5 rounded-full bg-white/15 text-[var(--color-fg)] lg:bg-transparent"
+                            : inMonth
+                              ? "text-[var(--color-fg)]"
+                              : "text-[var(--color-fg-muted)]",
                       )}
                     >
                       {format(d, "d")}
                     </div>
                     <button
-                      onClick={() => openCreate(d)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openCreate(d);
+                      }}
                       title="Add event"
                       aria-label="Add event"
-                      className="opacity-0 group-hover:opacity-100 text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] text-sm leading-none w-4 h-4 flex items-center justify-center rounded hover:bg-[var(--color-fg)]/[0.06]"
+                      className="hidden lg:flex opacity-0 group-hover:opacity-100 text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] text-sm leading-none w-4 h-4 items-center justify-center rounded hover:bg-[var(--color-fg)]/[0.06]"
                     >
                       +
                     </button>
                   </div>
-                  <div className="space-y-0.5">
+                  {/* Mobile-only color pill — Apple-style */}
+                  <div className="lg:hidden">
+                    <ColorPill items={items} />
+                  </div>
+                  {/* Desktop event tiles */}
+                  <div className="hidden lg:block space-y-0.5">
                     {visible.map((b) => {
                       const taskTile = taskMode && isTask(b.id);
                       const completed = isCompleted(b.id);
@@ -400,7 +420,111 @@ export function MonthGrid({
         ))}
       </div>
 
+      {/* Mobile-only: Apple-style day detail list under the grid */}
+      <div className="lg:hidden border-t border-[var(--color-border)] glass-subtle max-h-[45vh] overflow-y-auto">
+        <DayDetailList
+          day={selectedDay}
+          items={blocksForDay(selectedDay)}
+          onPick={(b) => openEdit(b)}
+          onAdd={() => openCreate(selectedDay)}
+        />
+      </div>
+
       <EventDialog mode={dialog} onClose={() => setDialog(null)} calendars={calendars} />
+    </div>
+  );
+}
+
+// Small horizontal pill of one bar per unique calendar color present that day.
+// Mirrors Apple's mobile month grid where the day cell shows the calendars
+// that have events that day rather than the event titles themselves.
+function ColorPill({ items }: { items: SerBlock[] }) {
+  if (items.length === 0) return <div className="h-1" />;
+  const seen = new Set<string>();
+  const colors: string[] = [];
+  for (const it of items) {
+    if (seen.has(it.color)) continue;
+    seen.add(it.color);
+    colors.push(it.color);
+    if (colors.length >= 6) break;
+  }
+  return (
+    <div className="flex gap-px justify-center mt-0.5">
+      <div className="flex h-1.5 rounded-full overflow-hidden">
+        {colors.map((c, i) => (
+          <span
+            key={i}
+            className="h-full"
+            style={{ backgroundColor: c, width: 8 }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DayDetailList({
+  day,
+  items,
+  onPick,
+  onAdd,
+}: {
+  day: Date;
+  items: SerBlock[];
+  onPick: (b: SerBlock) => void;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="px-3 py-2.5 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold tracking-tight">
+          {format(day, "EEEE, MMMM d")}
+        </div>
+        <button
+          onClick={onAdd}
+          className="text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] px-2 py-1 rounded-md hover:bg-white/5"
+        >
+          + Add
+        </button>
+      </div>
+      {items.length === 0 ? (
+        <div className="text-xs text-[var(--color-fg-muted)] py-3">
+          Nothing scheduled.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {items.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => onPick(b)}
+              className="w-full flex items-stretch gap-2.5 text-left rounded-lg hover:bg-white/[0.04] p-1.5 -mx-1.5"
+            >
+              <span
+                className="w-1 rounded-full shrink-0 self-stretch"
+                style={{ backgroundColor: b.color }}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{b.title}</div>
+                {b.calendarName && (
+                  <div className="text-[11px] text-[var(--color-fg-muted)] truncate">
+                    {b.calendarName}
+                  </div>
+                )}
+              </div>
+              <div className="text-[11px] text-[var(--color-fg-muted)] tabular-nums text-right shrink-0">
+                {b.allDay ? (
+                  <span>all-day</span>
+                ) : (
+                  <>
+                    <div>{format(new Date(b.start), "h:mm a").toLowerCase()}</div>
+                    <div>{format(new Date(b.end), "h:mm a").toLowerCase()}</div>
+                  </>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
