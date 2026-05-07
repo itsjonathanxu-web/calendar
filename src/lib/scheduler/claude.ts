@@ -87,10 +87,27 @@ function rulesBlock(rules: { text: string; priority: number }[]): string {
 
 function eventsBlock(
   events: { title: string; start: Date; end: Date; calendar: { name: string } }[],
+  tz: string,
 ): string {
   if (events.length === 0) return "(calendar is empty for the next 14 days)";
+  // Render in the user's LOCAL timezone so the model doesn't have to do UTC→TZ
+  // arithmetic (it gets it wrong as often as right). Also include ISO-UTC for
+  // unambiguous reference.
+  const fmt = (d: Date) =>
+    d.toLocaleString("en-US", {
+      timeZone: tz,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
   return events
-    .map((e) => `- ${e.start.toISOString()} → ${e.end.toISOString()}  ${e.calendar.name}: ${e.title}`)
+    .map(
+      (e) =>
+        `- ${fmt(e.start)} → ${fmt(e.end)}  [${e.start.toISOString()} → ${e.end.toISOString()}]  ${e.calendar.name}: ${e.title}`,
+    )
     .join("\n");
 }
 
@@ -159,17 +176,21 @@ function systemPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
     `Available calendars:`,
     calendarsBlock(ctx.calendars as unknown as Cal[]),
     ``,
-    `Upcoming events (next 14 days):`,
-    eventsBlock(ctx.events),
+    `Upcoming events (next 14 days, both LOCAL time and UTC shown):`,
+    eventsBlock(ctx.events, tz),
     ``,
     `Conventions:`,
-    `- All times are ISO-8601 with timezone offset.`,
+    `- Reason about times in the user's LOCAL timezone (${tz}). When emitting start/end in propose_event, output ISO-8601 with the correct offset OR UTC Z form — the UI will display them locally.`,
+    `- Sanity check: if user says "9 AM" they mean 9 AM ${tz}. In May, ${tz} is UTC-4, so 9 AM local = 13:00 UTC. Confirm by checking against the LOCAL strings above before proposing.`,
+    `- NEVER propose a time that overlaps any existing event in the list above. Treat the listed events as immovable unless the user explicitly says to reschedule them.`,
     `- Respect rules strictly. If a rule conflicts with the user's request, surface the conflict.`,
-    `- Routine/habit-style requests (stretching, reading, journaling, gym, etc.) → use a TASK category. If a fitting task category already exists (case-insensitive match on name), reuse it. Otherwise call propose_event with newCategoryName + newCategoryColor instead of calendarId — the UI will create the category on confirm.`,
-    `- Meeting/appointment requests with specific people or external commitments → use a SCHEDULING calendar (a Google account that ISN'T in the DO NOT USE list, or a local-task category if no Google is suitable).`,
+    `- Routine/habit-style requests (stretching, reading, journaling, gym, etc.) → use a TASK category. If a fitting task category already exists (case-insensitive substring match on name OR the user's keyword like "SHAI" matches), reuse it. Otherwise call propose_event with newCategoryName + newCategoryColor.`,
+    `- When auto-creating a category, name it after the SUBJECT of the request (e.g. "SHAI Research", "Stretching", "Reading"). Do NOT copy names of existing read-only calendars.`,
+    `- Meeting/appointment requests with specific people → use a SCHEDULING calendar that ISN'T in the DO NOT USE list. If none is suitable, fall back to a task category.`,
     `- Never propose events on the DO NOT USE calendars.`,
-    `- If multiple recurring instances are needed (e.g. "every weekday at 7am"), use rrule on the parent and propose a single event with rrule.`,
-    `- Be concise. If you have enough info, propose a slot rather than asking questions.`,
+    `- If multiple recurring instances are needed (e.g. "every weekday at 7am"), use rrule on a single propose_event (FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR, etc.).`,
+    `- For requests like "slot N hours" you may emit multiple propose_event calls — each one is independent.`,
+    `- Be concise. If you have enough info, propose slots rather than asking questions.`,
     `- When the user states a new preference ("from now on...", "always...", "never..."), save_rule.`,
     ``,
     `Color hints when auto-creating task categories:`,
