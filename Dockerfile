@@ -66,4 +66,4 @@ COPY --from=build /app/src/generated ./src/generated
 
 # Make sure the data dir exists before Prisma touches it (volume gets mounted at runtime).
 EXPOSE 3000
-CMD ["sh", "-c", "mkdir -p /app/data && npx prisma db push --accept-data-loss --skip-generate && exec npx next start -p 3000"]
+CMD ["sh", "-c", "mkdir -p /app/data && npx prisma db push --accept-data-loss && exec npx next start -p 3000"]
