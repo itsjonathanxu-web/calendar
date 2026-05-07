@@ -151,7 +151,22 @@ const BUCKETS: Bucket[] = [
   },
 ];
 
+// Allow either POST (programmatic) or GET (clicked in a browser).
+export async function GET(request: Request) {
+  const result = await runImport();
+  // After the import, send the user back to Settings so they can see the new buckets.
+  const url = new URL("/settings", request.url);
+  url.searchParams.set("synced", "categories");
+  url.searchParams.set("count", `${result.buckets} buckets · ${result.events} events`);
+  return Response.redirect(url, 303);
+}
+
 export async function POST() {
+  const result = await runImport();
+  return Response.json({ ok: true, ...result });
+}
+
+async function runImport() {
   // 1. Wipe any prior MCP import so re-running is idempotent
   const existing = await db.account.findFirst({ where: { source: "notion-mcp" } });
   if (existing) {
@@ -232,11 +247,10 @@ export async function POST() {
     }
   }
 
-  return NextResponse.json({
-    ok: true,
+  return {
     accountId: account.id,
     buckets: BUCKETS.length,
     events: totalEvents,
     appleFitnessFound: Boolean(appleFitness),
-  });
+  };
 }
