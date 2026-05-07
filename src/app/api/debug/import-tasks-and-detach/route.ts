@@ -84,9 +84,10 @@ async function run() {
       name: "📋 Tasks",
       color: sourceCal.color,
       enabled: true,
+      section: "tasks",
       config: JSON.stringify({ sortOrder: 0 }),
     },
-    update: { color: sourceCal.color, enabled: true },
+    update: { color: sourceCal.color, enabled: true, section: "tasks" },
   });
 
   // Hydrate notes from each Notion page's body content before migrating.

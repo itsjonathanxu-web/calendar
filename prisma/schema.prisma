@@ -35,6 +35,10 @@ model Calendar {
   enabled   Boolean @default(true) // filter toggle
   isDefault Boolean @default(false) // where AI-scheduled events land
   config    String? // JSON: per-source config (e.g., Notion {dateProperty, titleProperty})
+  // Top-level grouping in the FilterSidebar:
+  //  - "scheduling" — synced calendars (Apple, Google) + manual scheduling
+  //  - "tasks"      — local task subcategories (📋 Tasks, completed-tasks bucket, custom)
+  section   String  @default("scheduling")
   events    Event[]
 
   @@unique([accountId, sourceId])
@@ -151,6 +155,31 @@ model PushSubscription {
   userAgent String?
   createdAt DateTime @default(now())
   lastUsedAt DateTime?
+}
+
+// Weekly progress goals — schedule-driven, never touches tasks.
+// "3 workouts per week", "4 hours of SHAI per week", "stretch every morning".
+// The /progress page renders a weekly gantt of how much of each goal the
+// user's actual schedule contains.
+model ProgressGoal {
+  id          String   @id @default(cuid())
+  name        String   // "Fitness", "SHAI Research", "Stretching"
+  color       String   @default("#7c7c7c")
+  // count: count matching events per period
+  // hours: sum the duration (in hours) of matching events per period
+  // daily: at least one matching event per day (target = 7/week max)
+  mode        String   @default("count")
+  target      Float    @default(1)  // 3 workouts, 4 hours, 7 days, etc.
+  period      String   @default("week") // "week" — only week is supported for now
+  // Optional comma-separated list of Calendar.id values to match against
+  matchCalendars String?
+  // Optional comma-separated list of substrings to match against event titles
+  // (case-insensitive). Any matches counts.
+  matchTitles    String?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 // Standalone reminders — anything that isn't tied to a calendar event.
