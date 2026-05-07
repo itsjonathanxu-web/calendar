@@ -9,6 +9,7 @@ import {
 } from "@/lib/calendar/week";
 import { rangeForView, shiftAnchor, monthDays, VIEWS, type ViewName } from "@/lib/calendar/views";
 import { WeekGrid } from "@/components/calendar/WeekGrid";
+import { MobileWeekList } from "@/components/calendar/MobileWeekList";
 import { MonthGrid } from "@/components/calendar/MonthGrid";
 import { FilterSidebar } from "@/components/calendar/FilterSidebar";
 import { ChatToggle } from "@/components/calendar/ChatToggle";
@@ -50,7 +51,6 @@ export default async function CalendarPage({
       AND: [{ start: { lt: end } }, { end: { gt: start } }],
       rrule: null,
       recurrenceParentId: null,
-      calendar: { enabled: true },
     },
     include: { calendar: { include: { account: true } } },
     orderBy: { start: "asc" },
@@ -60,7 +60,6 @@ export default async function CalendarPage({
     where: {
       rrule: { not: null },
       recurrenceParentId: null,
-      calendar: { enabled: true },
     },
     include: { calendar: { include: { account: true } } },
   });
@@ -69,7 +68,6 @@ export default async function CalendarPage({
     where: {
       AND: [{ start: { lt: end } }, { end: { gt: start } }],
       recurrenceParentId: { not: null },
-      calendar: { enabled: true },
     },
     include: { calendar: { include: { account: true } } },
   });
@@ -257,16 +255,32 @@ export default async function CalendarPage({
             </div>
           </div>
         ) : view === "week" ? (
-          <WeekGrid
-            anchor={isoDate(anchor)}
-            blocks={blocks.map((b) => ({
-              ...b,
-              start: b.start.toISOString(),
-              end: b.end.toISOString(),
-            }))}
-            calendars={calendarOptions}
-            detailsById={detailsById}
-          />
+          <>
+            <div className="hidden lg:flex flex-col flex-1 min-h-0">
+              <WeekGrid
+                anchor={isoDate(anchor)}
+                blocks={blocks.map((b) => ({
+                  ...b,
+                  start: b.start.toISOString(),
+                  end: b.end.toISOString(),
+                }))}
+                calendars={calendarOptions}
+                detailsById={detailsById}
+              />
+            </div>
+            <div className="lg:hidden flex flex-col flex-1 min-h-0">
+              <MobileWeekList
+                anchor={isoDate(anchor)}
+                blocks={blocks.map((b) => ({
+                  ...b,
+                  start: b.start.toISOString(),
+                  end: b.end.toISOString(),
+                }))}
+                calendars={calendarOptions}
+                detailsById={detailsById}
+              />
+            </div>
+          </>
         ) : (
           <MonthGrid
             days={monthDays(anchor).map((d) => localDayKey(d))}

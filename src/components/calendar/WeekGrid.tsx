@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { layoutWeek, type Block, type LaidOutBlock } from "@/lib/calendar/week";
 import { EventDialog, type DialogMode, type WritableCalendar } from "./EventDialog";
 import { pushUndo, postJson } from "@/lib/undo";
+import { useDeviceFilter } from "@/lib/use-device-filter";
 
 const HOUR_HEIGHT = 48;
 const TOTAL_HEIGHT = 24 * HOUR_HEIGHT;
@@ -93,6 +94,7 @@ export function WeekGrid({
   detailsById?: Record<string, EventDetails>;
 }) {
   const router = useRouter();
+  const { isEnabled, ready } = useDeviceFilter();
   const dayDates = useMemo(() => {
     // Compute Sunday-anchored week of `anchor` in the user's local timezone.
     const a = parseLocalDate(anchor);
@@ -106,12 +108,19 @@ export function WeekGrid({
   }, [anchor]);
   const blockObjs: Block[] = useMemo(
     () =>
-      blocks.map((b) => ({
-        ...b,
-        start: new Date(b.start),
-        end: new Date(b.end),
-      })),
-    [blocks],
+      blocks
+        .filter((b) => {
+          if (!ready) return true;
+          const det = detailsById[b.id];
+          if (!det) return true;
+          return isEnabled(det.calendarId);
+        })
+        .map((b) => ({
+          ...b,
+          start: new Date(b.start),
+          end: new Date(b.end),
+        })),
+    [blocks, detailsById, isEnabled, ready],
   );
   const { timed, allDay } = useMemo(() => layoutWeek(blockObjs, dayDates), [blockObjs, dayDates]);
   const today = new Date();

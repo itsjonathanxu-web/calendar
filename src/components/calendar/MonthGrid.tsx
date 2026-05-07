@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import type { Block } from "@/lib/calendar/week";
 import { EventDialog, type DialogMode, type WritableCalendar } from "./EventDialog";
 import { pushUndo, postJson } from "@/lib/undo";
+import { useDeviceFilter } from "@/lib/use-device-filter";
 
 type SerBlock = Omit<Block, "start" | "end"> & { start: string; end: string };
 
@@ -56,6 +57,7 @@ export function MonthGrid({
     return exists ?? dayDates[0];
   });
   const router = useRouter();
+  const { isEnabled, ready } = useDeviceFilter();
 
   function isWritable(eventId: string): boolean {
     const det = detailsById[eventId];
@@ -180,6 +182,10 @@ export function MonthGrid({
     return blocks
       .filter((b) => {
         if (taskMode && detailsById[b.id]?.section !== "tasks") return false;
+        if (ready) {
+          const det = detailsById[b.id];
+          if (det && !isEnabled(det.calendarId)) return false;
+        }
         const startD = new Date(b.start);
         const endD = new Date(b.end);
         if (b.allDay) {
