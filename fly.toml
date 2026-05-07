@@ -21,7 +21,9 @@ primary_region = 'yyz'
 [http_service]
   internal_port = 3000
   force_https = true
-  auto_stop_machines = 'stop'
+  # 'off' keeps the machine awake at all times — no cold-start delay.
+  # Within Fly's $5/mo free credit at 512MB.
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
   processes = ['app']
