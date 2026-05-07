@@ -11,9 +11,13 @@ export type ToolUse =
       title: string;
       start: string;
       end: string;
-      calendarId: string;
+      // Either an existing calendar id OR a new task category to create on confirm.
+      calendarId?: string;
+      newCategoryName?: string;
+      newCategoryColor?: string;
       allDay?: boolean;
       notes?: string;
+      rrule?: string;
       reasoning?: string;
     }
   | {
@@ -48,12 +52,18 @@ function pickBackend(): Backend {
 
 // ── Shared context build ────────────────────────────────────────────────────
 
+// Google accounts that should NEVER receive AI-proposed events. Hard-block by
+// account label so the model can't talk itself into using them as a default.
+const GOOGLE_DENYLIST = new Set(["itsjonathanxu@gmail.com"]);
+
 async function buildContext() {
   const [rules, settings, calendars, events] = await Promise.all([
     db.rule.findMany({ where: { active: true }, orderBy: { priority: "desc" } }),
     db.settings.findUnique({ where: { id: "settings" } }),
     db.calendar.findMany({
-      where: { account: { source: { in: ["google", "notion-mcp"] } } },
+      // Include Apple too for read-only awareness ("you have a 'Fitness' calendar
+      // already; if the user asks for a workout, propose a NEW event in a local
+      // task category rather than touching Apple").
       include: { account: true },
       orderBy: [{ isDefault: "desc" }, { name: "asc" }],
     }),
@@ -84,28 +94,70 @@ function eventsBlock(
     .join("\n");
 }
 
-function calendarsBlock(
-  calendars: { id: string; name: string; isDefault: boolean; account: { label: string } }[],
-): string {
-  return calendars
-    .map((c) => `- id=${c.id}  "${c.name}" (${c.account.label})${c.isDefault ? "  ⭐ default" : ""}`)
-    .join("\n");
+type Cal = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  section: string;
+  account: { source: string; label: string };
+};
+
+function calendarsBlock(calendars: Cal[]): string {
+  const tasks = calendars.filter((c) => c.section === "tasks");
+  const sched = calendars.filter(
+    (c) =>
+      c.section !== "tasks" &&
+      !(c.account.source === "google" && GOOGLE_DENYLIST.has(c.account.label)) &&
+      c.account.source !== "apple", // Apple is read-only
+  );
+  const blocked = calendars.filter(
+    (c) => c.account.source === "google" && GOOGLE_DENYLIST.has(c.account.label),
+  );
+
+  const lines: string[] = [];
+  lines.push(`SCHEDULING — for time-blocked events (use these IDs):`);
+  if (sched.length === 0) lines.push(`  (none — must auto-create a new task category)`);
+  for (const c of sched) {
+    lines.push(
+      `  - id=${c.id}  "${c.name}"  (${c.account.source}/${c.account.label})${c.isDefault ? "  ⭐ default" : ""}`,
+    );
+  }
+  lines.push(``);
+  lines.push(`TASKS — for to-dos (use these IDs, or auto-create a new task category):`);
+  if (tasks.length === 0) lines.push(`  (none yet — propose a new category via propose_event with newCategoryName)`);
+  for (const c of tasks) {
+    lines.push(`  - id=${c.id}  "${c.name}"`);
+  }
+  if (blocked.length > 0) {
+    lines.push(``);
+    lines.push(`DO NOT USE these calendars:`);
+    for (const c of blocked) {
+      lines.push(`  - "${c.name}" (${c.account.label}) — user has explicitly excluded`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function systemPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
   const tz = ctx.settings?.timezone ?? "America/Toronto";
   const wh = `${ctx.settings?.workdayStart ?? "09:00"}–${ctx.settings?.workdayEnd ?? "18:00"} ${tz}`;
-  const now = new Date().toISOString();
+  const now = new Date();
+  const todayLocal = now.toLocaleString("en-US", { timeZone: tz, weekday: "long", year: "numeric", month: "long", day: "numeric" });
   return [
     `You are a scheduling assistant inside a unified calendar app.`,
-    `Current time: ${now}`,
+    `Current time: ${now.toISOString()} (local: ${todayLocal} in ${tz})`,
     `Default working hours: ${wh}`,
+    ``,
+    `Week convention:`,
+    `- Weeks run SUNDAY → SATURDAY.`,
+    `- "this week" / "rest of the week" = today through the upcoming Saturday inclusive.`,
+    `- "next week" = the following Sunday → Saturday.`,
     ``,
     `User's active scheduling rules (higher priority first):`,
     rulesBlock(ctx.rules),
     ``,
-    `Writable calendars (use one of these IDs when proposing events):`,
-    calendarsBlock(ctx.calendars),
+    `Available calendars:`,
+    calendarsBlock(ctx.calendars as unknown as Cal[]),
     ``,
     `Upcoming events (next 14 days):`,
     eventsBlock(ctx.events),
@@ -113,9 +165,19 @@ function systemPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
     `Conventions:`,
     `- All times are ISO-8601 with timezone offset.`,
     `- Respect rules strictly. If a rule conflicts with the user's request, surface the conflict.`,
-    `- Prefer ⭐ default calendar unless the user names another.`,
+    `- Routine/habit-style requests (stretching, reading, journaling, gym, etc.) → use a TASK category. If a fitting task category already exists (case-insensitive match on name), reuse it. Otherwise call propose_event with newCategoryName + newCategoryColor instead of calendarId — the UI will create the category on confirm.`,
+    `- Meeting/appointment requests with specific people or external commitments → use a SCHEDULING calendar (a Google account that ISN'T in the DO NOT USE list, or a local-task category if no Google is suitable).`,
+    `- Never propose events on the DO NOT USE calendars.`,
+    `- If multiple recurring instances are needed (e.g. "every weekday at 7am"), use rrule on the parent and propose a single event with rrule.`,
     `- Be concise. If you have enough info, propose a slot rather than asking questions.`,
     `- When the user states a new preference ("from now on...", "always...", "never..."), save_rule.`,
+    ``,
+    `Color hints when auto-creating task categories:`,
+    `- Fitness/movement/stretching → #22c55e or #84cc16 (green)`,
+    `- Learning/research/reading → #dc2626 (red)`,
+    `- Social/personal → #ec4899 (pink)`,
+    `- Admin/chores → #7c7c7c (grey)`,
+    `- Creative/work → #0ea5e9 (blue)`,
   ].join("\n");
 }
 
@@ -134,19 +196,31 @@ async function loadHistory(): Promise<{ role: "user" | "assistant"; content: str
 const TOOLS: Anthropic.Tool[] = [
   {
     name: "propose_event",
-    description: "Suggest a new event for the user to confirm. Does NOT create directly.",
+    description:
+      "Suggest a new event for the user to confirm. Does NOT create directly. " +
+      "Provide EITHER calendarId (existing) OR newCategoryName (auto-create task category on confirm). " +
+      "Use rrule (e.g. FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR) for recurring habits.",
     input_schema: {
       type: "object",
       properties: {
         title: { type: "string" },
         start: { type: "string" },
         end: { type: "string" },
-        calendarId: { type: "string" },
+        calendarId: { type: "string", description: "Existing calendar id" },
+        newCategoryName: {
+          type: "string",
+          description: "Name of a NEW task category to create instead of using an existing calendar",
+        },
+        newCategoryColor: {
+          type: "string",
+          description: "Hex color for the new category (e.g. '#22c55e')",
+        },
         allDay: { type: "boolean" },
+        rrule: { type: "string" },
         notes: { type: "string" },
         reasoning: { type: "string" },
       },
-      required: ["title", "start", "end", "calendarId"],
+      required: ["title", "start", "end"],
     },
   },
   {
@@ -253,11 +327,14 @@ const CLI_SCHEMA = {
               start: { type: "string" },
               end: { type: "string" },
               calendarId: { type: "string" },
+              newCategoryName: { type: "string" },
+              newCategoryColor: { type: "string" },
               allDay: { type: "boolean" },
+              rrule: { type: "string" },
               notes: { type: "string" },
               reasoning: { type: "string" },
             },
-            required: ["type", "title", "start", "end", "calendarId"],
+            required: ["type", "title", "start", "end"],
           },
           {
             type: "object",

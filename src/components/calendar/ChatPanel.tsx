@@ -12,8 +12,11 @@ type Proposal =
       title: string;
       start: string;
       end: string;
-      calendarId: string;
+      calendarId?: string;
+      newCategoryName?: string;
+      newCategoryColor?: string;
       allDay?: boolean;
+      rrule?: string;
       notes?: string;
       reasoning?: string;
     }
@@ -105,16 +108,36 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
 
   async function confirmProposal(p: Proposal) {
     if (p.type === "propose_event") {
+      let calendarId = p.calendarId;
+      // If Claude proposed a brand-new category, create it first and route the
+      // event into it.
+      if (!calendarId && p.newCategoryName) {
+        const r = await fetch("/api/calendars/create-task-subcategory", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: p.newCategoryName,
+            color: p.newCategoryColor ?? "#7c7c7c",
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok || !data.calendar?.id) {
+          throw new Error(data.error ?? "category_create_failed");
+        }
+        calendarId = data.calendar.id;
+      }
+      if (!calendarId) throw new Error("no calendarId");
       await fetch("/api/events/create", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          calendarId: p.calendarId,
+          calendarId,
           title: p.title,
           start: p.start,
           end: p.end,
           allDay: p.allDay,
           notes: p.notes,
+          rrule: p.rrule ?? null,
         }),
       });
     } else {
@@ -260,7 +283,19 @@ function ProposalCard({ p, onConfirm }: { p: Proposal; onConfirm: () => void }) 
           </div>
           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
             {format(start, "EEE MMM d, h:mm a")} – {format(end, "h:mm a")}
+            {p.type === "propose_event" && p.rrule && (
+              <span className="ml-1.5">· repeats</span>
+            )}
           </div>
+          {p.type === "propose_event" && p.newCategoryName && (
+            <div className="text-[10px] mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 bg-white/5">
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ backgroundColor: p.newCategoryColor ?? "#7c7c7c" }}
+              />
+              new category: {p.newCategoryName}
+            </div>
+          )}
           {p.reasoning && (
             <div className="text-xs text-[var(--color-fg-muted)] mt-1.5 italic">{p.reasoning}</div>
           )}
