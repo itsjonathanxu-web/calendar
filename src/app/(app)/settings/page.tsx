@@ -2,6 +2,8 @@ import { Trash2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { isGoogleConfigured } from "@/lib/sources/google";
 import { formatDistanceToNow } from "date-fns";
+import { PushSettings } from "@/components/PushSettings";
+import { RemindersCRUD, type ReminderRow } from "@/components/RemindersCRUD";
 
 const messages: Record<string, { kind: "ok" | "err"; text: string }> = {
   google_not_configured: {
@@ -209,10 +211,44 @@ export default async function SettingsPage({
         </div>
       </section>
 
+      <NotificationsSection />
+      <RemindersSection />
       <WorkingHoursSection />
       <RulesSection />
     </div>
   );
+}
+
+async function NotificationsSection() {
+  const settings = await db.settings.findUnique({ where: { id: "settings" } });
+  const devices = await db.pushSubscription.findMany({ orderBy: { createdAt: "desc" } });
+  return (
+    <PushSettings
+      initialEnabled={settings?.remindersEnabled ?? true}
+      initialLeadMin={settings?.reminderLeadMin ?? 15}
+      initialDevices={devices.map((d) => ({
+        id: d.id,
+        label: d.label,
+        endpoint: d.endpoint,
+        createdAt: d.createdAt.toISOString(),
+        lastUsedAt: d.lastUsedAt ? d.lastUsedAt.toISOString() : null,
+      }))}
+    />
+  );
+}
+
+async function RemindersSection() {
+  const reminders = await db.reminder.findMany({ orderBy: { dueAt: "asc" } });
+  const initial: ReminderRow[] = reminders.map((r) => ({
+    id: r.id,
+    title: r.title,
+    notes: r.notes,
+    dueAt: r.dueAt.toISOString(),
+    rrule: r.rrule,
+    enabled: r.enabled,
+    lastFiredAt: r.lastFiredAt ? r.lastFiredAt.toISOString() : null,
+  }));
+  return <RemindersCRUD initial={initial} />;
 }
 
 async function WorkingHoursSection() {

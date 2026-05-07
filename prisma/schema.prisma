@@ -58,8 +58,19 @@ model Event {
   // raw payload from source for debugging / round-tripping
   raw        String?  // JSON
 
+  // Recurrence (iCal-style) — null for non-recurring events
+  rrule      String?  // e.g. "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+  // For recurring instances: pointer to the master event so we can find siblings
+  recurrenceParentId String?
+  recurrenceParent   Event?  @relation("RecurrenceChildren", fields: [recurrenceParentId], references: [id], onDelete: Cascade)
+  recurrenceChildren Event[] @relation("RecurrenceChildren")
+
+  // Push-notification bookkeeping — when did we last fire a "starts soon" reminder?
+  notifiedAt DateTime?
+
   @@unique([calendarId, sourceId])
   @@index([start, end])
+  @@index([notifiedAt, start])
 }
 
 // Long-term project. Often backed by a Notion page; has a due date.
@@ -124,4 +135,38 @@ model Settings {
   defaultCalendarId String?
   passwordHash      String? // bcrypt-style hash for the local login shell
   encryptionKeySalt String? // for credential encryption
+
+  // Push notifications
+  remindersEnabled  Boolean @default(true)
+  reminderLeadMin   Int     @default(15) // minutes before an event to notify
+}
+
+// Browser/device push subscription. One row per device that's opted in.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  label     String?  // user-friendly device name ("iPhone Safari", "MacBook Chrome")
+  userAgent String?
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+}
+
+// Standalone reminders — anything that isn't tied to a calendar event.
+// Examples: "take vitamins at 9am", "submit timesheet every Friday at 5pm"
+model Reminder {
+  id        String   @id @default(cuid())
+  title     String
+  notes     String?
+  dueAt     DateTime  // first occurrence
+  rrule     String?   // for recurring reminders
+  enabled   Boolean   @default(true)
+  // Last fired-at (for de-duping in the cron loop). For recurring reminders, this advances.
+  lastFiredAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([dueAt])
+  @@index([lastFiredAt])
 }
