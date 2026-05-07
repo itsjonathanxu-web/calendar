@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { spawn } from "node:child_process";
 import { addDays } from "date-fns";
 import { db } from "@/lib/db";
 
@@ -28,18 +29,31 @@ export type AssistantTurn = {
   proposals: ToolUse[];
 };
 
-function getClient(): Anthropic {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error("ANTHROPIC_API_KEY missing in .env");
-  return new Anthropic({ apiKey: key });
+type RawTurn = {
+  text: string;
+  proposals: ToolUse[];
+  ruleSaves: { text: string; priority: number }[];
+  hourUpdates: { start: string; end: string }[];
+};
+
+// "cli" = shell out to `claude` CLI (uses Pro/Max subscription quota — free)
+// "api" = SDK with ANTHROPIC_API_KEY (pay per token)
+type Backend = "cli" | "api";
+
+function pickBackend(): Backend {
+  const explicit = (process.env.CLAUDE_BACKEND ?? "").toLowerCase();
+  if (explicit === "cli" || explicit === "api") return explicit;
+  return process.env.ANTHROPIC_API_KEY ? "api" : "cli";
 }
+
+// ── Shared context build ────────────────────────────────────────────────────
 
 async function buildContext() {
   const [rules, settings, calendars, events] = await Promise.all([
     db.rule.findMany({ where: { active: true }, orderBy: { priority: "desc" } }),
     db.settings.findUnique({ where: { id: "settings" } }),
     db.calendar.findMany({
-      where: { account: { source: "google" } },
+      where: { account: { source: { in: ["google", "notion-mcp"] } } },
       include: { account: true },
       orderBy: [{ isDefault: "desc" }, { name: "asc" }],
     }),
@@ -53,12 +67,11 @@ async function buildContext() {
       orderBy: { start: "asc" },
     }),
   ]);
-
   return { rules, settings, calendars, events };
 }
 
 function rulesBlock(rules: { text: string; priority: number }[]): string {
-  if (rules.length === 0) return "(no rules yet — Claude can call save_rule when the user states a preference)";
+  if (rules.length === 0) return "(no rules yet — call save_rule when the user states a preference)";
   return rules.map((r) => `- [${r.priority}] ${r.text}`).join("\n");
 }
 
@@ -67,10 +80,7 @@ function eventsBlock(
 ): string {
   if (events.length === 0) return "(calendar is empty for the next 14 days)";
   return events
-    .map(
-      (e) =>
-        `- ${e.start.toISOString()} → ${e.end.toISOString()}  ${e.calendar.name}: ${e.title}`,
-    )
+    .map((e) => `- ${e.start.toISOString()} → ${e.end.toISOString()}  ${e.calendar.name}: ${e.title}`)
     .join("\n");
 }
 
@@ -102,35 +112,46 @@ function systemPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
     ``,
     `Conventions:`,
     `- All times are ISO-8601 with timezone offset.`,
-    `- Respect the rules above strictly. If a rule conflicts with the user's request, surface the conflict.`,
-    `- When proposing an event, prefer the calendar marked ⭐ default unless the user names another.`,
+    `- Respect rules strictly. If a rule conflicts with the user's request, surface the conflict.`,
+    `- Prefer ⭐ default calendar unless the user names another.`,
     `- Be concise. If you have enough info, propose a slot rather than asking questions.`,
-    `- When the user states a new preference ("from now on...", "always...", "never..."), call save_rule.`,
+    `- When the user states a new preference ("from now on...", "always...", "never..."), save_rule.`,
   ].join("\n");
 }
+
+async function loadHistory(): Promise<{ role: "user" | "assistant"; content: string }[]> {
+  const rows = await db.chatMessage.findMany({ orderBy: { createdAt: "asc" }, take: 40 });
+  const msgs: { role: "user" | "assistant"; content: string }[] = [];
+  for (const r of rows) {
+    if (r.role === "user") msgs.push({ role: "user", content: r.content });
+    else if (r.role === "assistant") msgs.push({ role: "assistant", content: r.content });
+  }
+  return msgs;
+}
+
+// ── API backend (uses ANTHROPIC_API_KEY) ────────────────────────────────────
 
 const TOOLS: Anthropic.Tool[] = [
   {
     name: "propose_event",
-    description:
-      "Suggest creating a new event for the user to confirm. Does NOT create it directly.",
+    description: "Suggest a new event for the user to confirm. Does NOT create directly.",
     input_schema: {
       type: "object",
       properties: {
         title: { type: "string" },
-        start: { type: "string", description: "ISO-8601 date-time" },
-        end: { type: "string", description: "ISO-8601 date-time" },
-        calendarId: { type: "string", description: "id of the writable calendar" },
+        start: { type: "string" },
+        end: { type: "string" },
+        calendarId: { type: "string" },
         allDay: { type: "boolean" },
         notes: { type: "string" },
-        reasoning: { type: "string", description: "Brief why-this-slot for the user." },
+        reasoning: { type: "string" },
       },
       required: ["title", "start", "end", "calendarId"],
     },
   },
   {
     name: "propose_reschedule",
-    description: "Suggest moving an existing event to a new time. Does NOT move it directly.",
+    description: "Suggest moving an existing event. Does NOT move directly.",
     input_schema: {
       type: "object",
       properties: {
@@ -144,13 +165,12 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "save_rule",
-    description:
-      "Persist a new scheduling rule the user just stated (e.g. 'no meetings before 10am').",
+    description: "Persist a new scheduling rule.",
     input_schema: {
       type: "object",
       properties: {
         text: { type: "string" },
-        priority: { type: "integer", description: "0–100; higher applies first" },
+        priority: { type: "integer" },
       },
       required: ["text"],
     },
@@ -161,112 +181,262 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object",
       properties: {
-        start: { type: "string", description: "HH:mm" },
-        end: { type: "string", description: "HH:mm" },
+        start: { type: "string" },
+        end: { type: "string" },
       },
       required: ["start", "end"],
     },
   },
 ];
 
-async function loadHistory(): Promise<Anthropic.MessageParam[]> {
-  const rows = await db.chatMessage.findMany({
-    orderBy: { createdAt: "asc" },
-    take: 40,
-  });
-  // Convert stored rows into Anthropic-shaped messages.
-  // Tool results aren't replayed in v1 — we only keep user/assistant text turns.
-  const msgs: Anthropic.MessageParam[] = [];
-  for (const r of rows) {
-    if (r.role === "user") msgs.push({ role: "user", content: r.content });
-    else if (r.role === "assistant") msgs.push({ role: "assistant", content: r.content });
-  }
-  return msgs;
-}
-
-export async function chat(userMessage: string): Promise<AssistantTurn> {
-  const ctx = await buildContext();
-  const client = getClient();
-  const sys = systemPrompt(ctx);
-  const history = await loadHistory();
-
-  await db.chatMessage.create({
-    data: { role: "user", content: userMessage },
-  });
+async function backendApi(
+  sys: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  userMessage: string,
+): Promise<RawTurn> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY missing for api backend");
+  const client = new Anthropic({ apiKey });
 
   const messages: Anthropic.MessageParam[] = [
-    ...history,
+    ...history.map((m) => ({ role: m.role, content: m.content }) as Anthropic.MessageParam),
     { role: "user", content: userMessage },
   ];
 
   const res = await client.messages.create({
     model: MODEL,
     max_tokens: 1024,
-    system: [
-      {
-        type: "text",
-        text: sys,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
+    system: [{ type: "text", text: sys, cache_control: { type: "ephemeral" } }],
     tools: TOOLS,
     messages,
   });
 
-  const proposals: ToolUse[] = [];
-  let text = "";
-
+  const turn: RawTurn = { text: "", proposals: [], ruleSaves: [], hourUpdates: [] };
   for (const block of res.content) {
-    if (block.type === "text") {
-      text += block.text;
-    } else if (block.type === "tool_use") {
+    if (block.type === "text") turn.text += block.text;
+    else if (block.type === "tool_use") {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const input = block.input as any;
       if (block.name === "propose_event") {
-        proposals.push({
-          type: "propose_event",
-          title: input.title,
-          start: input.start,
-          end: input.end,
-          calendarId: input.calendarId,
-          allDay: input.allDay,
-          notes: input.notes,
-          reasoning: input.reasoning,
-        });
+        turn.proposals.push({ type: "propose_event", ...input });
       } else if (block.name === "propose_reschedule") {
-        proposals.push({
-          type: "propose_reschedule",
-          eventId: input.eventId,
-          newStart: input.newStart,
-          newEnd: input.newEnd,
-          reasoning: input.reasoning,
-        });
+        turn.proposals.push({ type: "propose_reschedule", ...input });
       } else if (block.name === "save_rule") {
-        await db.rule.create({
-          data: { text: input.text, priority: Number(input.priority ?? 50) },
-        });
-        text += `\n\n_Saved rule: "${input.text}"._`;
+        turn.ruleSaves.push({ text: input.text, priority: Number(input.priority ?? 50) });
       } else if (block.name === "update_working_hours") {
-        await db.settings.upsert({
-          where: { id: "settings" },
-          create: { id: "settings", workdayStart: input.start, workdayEnd: input.end },
-          update: { workdayStart: input.start, workdayEnd: input.end },
-        });
-        text += `\n\n_Working hours set to ${input.start}–${input.end}._`;
+        turn.hourUpdates.push({ start: input.start, end: input.end });
       }
     }
   }
+  return turn;
+}
 
-  const summary = text.trim() || (proposals.length ? "(proposed a slot)" : "");
+// ── CLI backend (uses Claude Code subscription via `claude -p`) ─────────────
+
+const CLI_SCHEMA = {
+  type: "object",
+  properties: {
+    text: {
+      type: "string",
+      description: "Your reply to the user. Keep it concise.",
+    },
+    actions: {
+      type: "array",
+      description: "Side effects to perform. Empty array if none.",
+      items: {
+        oneOf: [
+          {
+            type: "object",
+            properties: {
+              type: { const: "propose_event" },
+              title: { type: "string" },
+              start: { type: "string" },
+              end: { type: "string" },
+              calendarId: { type: "string" },
+              allDay: { type: "boolean" },
+              notes: { type: "string" },
+              reasoning: { type: "string" },
+            },
+            required: ["type", "title", "start", "end", "calendarId"],
+          },
+          {
+            type: "object",
+            properties: {
+              type: { const: "propose_reschedule" },
+              eventId: { type: "string" },
+              newStart: { type: "string" },
+              newEnd: { type: "string" },
+              reasoning: { type: "string" },
+            },
+            required: ["type", "eventId", "newStart", "newEnd"],
+          },
+          {
+            type: "object",
+            properties: {
+              type: { const: "save_rule" },
+              text: { type: "string" },
+              priority: { type: "integer" },
+            },
+            required: ["type", "text"],
+          },
+          {
+            type: "object",
+            properties: {
+              type: { const: "update_working_hours" },
+              start: { type: "string" },
+              end: { type: "string" },
+            },
+            required: ["type", "start", "end"],
+          },
+        ],
+      },
+    },
+  },
+  required: ["text", "actions"],
+};
+
+function flattenHistory(
+  history: { role: "user" | "assistant"; content: string }[],
+  userMessage: string,
+): string {
+  if (history.length === 0) return userMessage;
+  const past = history.map((m) => `${m.role === "user" ? "USER" : "ASSISTANT"}: ${m.content}`).join("\n\n");
+  return `Previous turns (for context only):\n${past}\n\nNEW USER MESSAGE:\n${userMessage}`;
+}
+
+async function backendCli(
+  sys: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  userMessage: string,
+): Promise<RawTurn> {
+  const prompt = flattenHistory(history, userMessage);
+  const args = [
+    "-p",
+    "--output-format", "json",
+    "--no-session-persistence",
+    "--permission-mode", "dontAsk",
+    "--model", "sonnet",
+    "--max-turns", "5",
+    "--system-prompt", sys,
+    "--json-schema", JSON.stringify(CLI_SCHEMA),
+    prompt,
+  ];
+
+  const stdout = await runCli("claude", args, 60_000);
+
+  let envelope: { structured_output?: unknown; result?: string };
+  try {
+    envelope = JSON.parse(stdout);
+  } catch {
+    throw new Error(`claude CLI returned non-JSON: ${stdout.slice(0, 300)}`);
+  }
+
+  let parsed: { text?: string; actions?: unknown[] } | null = null;
+  if (envelope.structured_output && typeof envelope.structured_output === "object") {
+    parsed = envelope.structured_output as { text?: string; actions?: unknown[] };
+  } else if (typeof envelope.result === "string") {
+    const m = envelope.result.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        parsed = JSON.parse(m[0]);
+      } catch {}
+    }
+  }
+  if (!parsed) throw new Error("claude CLI returned no structured output");
+
+  const turn: RawTurn = { text: parsed.text ?? "", proposals: [], ruleSaves: [], hourUpdates: [] };
+  for (const action of parsed.actions ?? []) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const a = action as any;
+    if (a.type === "propose_event" || a.type === "propose_reschedule") {
+      turn.proposals.push(a as ToolUse);
+    } else if (a.type === "save_rule") {
+      turn.ruleSaves.push({ text: a.text, priority: Number(a.priority ?? 50) });
+    } else if (a.type === "update_working_hours") {
+      turn.hourUpdates.push({ start: a.start, end: a.end });
+    }
+  }
+  return turn;
+}
+
+function runCli(cmd: string, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+      reject(new Error(`claude CLI timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      if (!timedOut) reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      if (code !== 0) {
+        reject(new Error(`claude CLI exited ${code}: ${stderr.slice(0, 500)}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
+}
+
+// ── Public chat() ───────────────────────────────────────────────────────────
+
+export async function chat(userMessage: string): Promise<AssistantTurn> {
+  const ctx = await buildContext();
+  const sys = systemPrompt(ctx);
+  const history = await loadHistory();
+
+  await db.chatMessage.create({ data: { role: "user", content: userMessage } });
+
+  const backend = pickBackend();
+  let turn: RawTurn;
+  try {
+    turn = backend === "cli"
+      ? await backendCli(sys, history, userMessage)
+      : await backendApi(sys, history, userMessage);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await db.chatMessage.create({
+      data: { role: "assistant", content: `Error: ${msg}` },
+    });
+    throw err;
+  }
+
+  // Apply side effects
+  let extra = "";
+  for (const r of turn.ruleSaves) {
+    await db.rule.create({ data: { text: r.text, priority: r.priority } });
+    extra += `\n\n_Saved rule: "${r.text}"._`;
+  }
+  for (const h of turn.hourUpdates) {
+    await db.settings.upsert({
+      where: { id: "settings" },
+      create: { id: "settings", workdayStart: h.start, workdayEnd: h.end },
+      update: { workdayStart: h.start, workdayEnd: h.end },
+    });
+    extra += `\n\n_Working hours set to ${h.start}–${h.end}._`;
+  }
+
+  const finalText = (turn.text + extra).trim() || (turn.proposals.length ? "(proposed a slot)" : "");
   await db.chatMessage.create({
     data: {
       role: "assistant",
-      content: summary,
-      toolCalls: proposals.length ? JSON.stringify(proposals) : null,
+      content: finalText,
+      toolCalls: turn.proposals.length ? JSON.stringify(turn.proposals) : null,
     },
   });
 
-  return { text: summary, proposals };
+  return { text: finalText, proposals: turn.proposals };
 }
 
 export async function reset() {
