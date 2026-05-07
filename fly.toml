@@ -1,12 +1,21 @@
 # Fly.io deployment config for the unified calendar.
-# Mirrors the outlook sorter's pattern: persistent volume holds the `claude` CLI's
-# OAuth credentials so the app uses the user's Pro/Max subscription quota for free.
+# Single mounted volume holds:
+#   • the SQLite database at /app/data/dev.db
+#   • the `claude` CLI's OAuth credentials at /app/data/.claude
+# Both survive restarts, redeploys, and machine moves.
 
 app = "jonathan-calendar"
 primary_region = "yyz" # Toronto
 
 [build]
   dockerfile = "Dockerfile"
+
+[env]
+  # SQLite file lives on the mounted volume
+  DATABASE_URL = "file:/app/data/dev.db"
+  # Force ~/.claude to resolve under the volume so OAuth tokens persist
+  HOME = "/app/data"
+  NODE_ENV = "production"
 
 [http_service]
   internal_port = 3000
@@ -29,10 +38,9 @@ primary_region = "yyz" # Toronto
   cpu_kind = "shared"
   cpus = 1
 
-# Persistent volume for the `claude` CLI's OAuth credentials.
-# After first deploy run:
+# After the first deploy, run once to authenticate the CLI:
 #   fly ssh console -C "claude login"
-# and follow the URL. Tokens land in /app/.claude and survive restarts.
+# Tokens land in /app/data/.claude (because HOME=/app/data).
 [[mounts]]
   source = "calendar_data"
-  destination = "/app/.claude"
+  destination = "/app/data"

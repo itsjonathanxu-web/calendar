@@ -7,9 +7,8 @@ generator client {
 }
 
 datasource db {
-  // Both providers are supported. DATABASE_URL determines which is actually used at runtime.
-  // Local dev: file:./dev.db (SQLite). Production (Vercel): postgres://... (Neon).
-  provider = "postgresql"
+  // SQLite — local dev uses ./dev.db; Fly prod stores at /app/data/dev.db on the mounted volume.
+  provider = "sqlite"
 }
 
 // One connected source: Google, Notion, or Apple iCloud (CalDAV)

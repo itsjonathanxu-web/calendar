@@ -2,6 +2,9 @@
 # Multi-stage Dockerfile for Fly.io deployment.
 # Mirrors the outlook sorter pattern: install the `claude` CLI globally so the app
 # can shell out to it and use the Pro/Max subscription quota instead of API tokens.
+#
+# Single Fly volume mounted at /app/data holds both the SQLite database and
+# the CLI's OAuth credentials (HOME is set to /app/data, so ~/.claude lives there).
 
 ARG NODE_VERSION=20.18.0
 
@@ -10,7 +13,7 @@ FROM node:${NODE_VERSION}-bookworm-slim AS deps
 
 WORKDIR /app
 
-# Native build tools for better-sqlite3 + pg
+# Native build tools for better-sqlite3
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         python3 \
@@ -30,14 +33,15 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Generate Prisma client only — schema push happens at runtime (DATABASE_URL is required).
+# Generate Prisma client only — schema push happens at runtime once the
+# DATABASE_URL points at the mounted volume.
 RUN npx prisma generate
 RUN npx next build
 
 # ─── runtime stage ────────────────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 
-# Install the `claude` CLI globally so /lib/scheduler/claude.ts can spawn it.
+# `claude` CLI globally so /lib/scheduler/claude.ts can spawn it.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @anthropic-ai/claude-code
@@ -46,10 +50,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
-# Force ~/.claude resolution to /app/.claude so the volume mount catches it
-ENV HOME=/app
+# HOME=/app/data — set in fly.toml [env] too, but kept here for local container runs.
+ENV HOME=/app/data
 
-# Bring over what we actually need to run
+# Bring over what we actually need to run.
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
@@ -60,6 +64,6 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 COPY --from=build /app/src/generated ./src/generated
 
-# Push schema at boot (idempotent if DB already in sync), then start Next.js.
+# Make sure the data dir exists before Prisma touches it (volume gets mounted at runtime).
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss --skip-generate && exec npx next start -p 3000"]
+CMD ["sh", "-c", "mkdir -p /app/data && npx prisma db push --accept-data-loss --skip-generate && exec npx next start -p 3000"]
