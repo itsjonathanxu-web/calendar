@@ -102,32 +102,65 @@ function parseICS(ics: string, windowStart: Date, windowEnd: Date): ParsedEvent[
   }
   const comp = new ICAL.Component(jcal as unknown as unknown[]);
   const vevents = comp.getAllSubcomponents("vevent");
-  for (const vevent of vevents) {
+  if (vevents.length === 0) return out;
+
+  // Apple stores recurring events as one VEVENT with RRULE (the master) plus
+  // additional VEVENTs with RECURRENCE-ID for any modified instances. To avoid
+  // double-counting, we attach exceptions to the master before iterating, and
+  // skip the standalone exception VEVENTs.
+  type WithComponent = ICAL.Event & { component?: unknown };
+  const events = vevents.map((v) => new ICAL.Event(v) as WithComponent);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isException = (e: any): boolean => {
     try {
-      const ev = new ICAL.Event(vevent);
+      return typeof e.isRecurrenceException === "function"
+        ? Boolean(e.isRecurrenceException())
+        : Boolean(e.recurrenceId);
+    } catch {
+      return false;
+    }
+  };
+
+  const masters = events.filter((e) => !isException(e));
+  const exceptions = events.filter((e) => isException(e));
+
+  for (const ev of masters) {
+    try {
       const uid = ev.uid;
       const summary = ev.summary || "(untitled)";
       const description = ev.description || null;
 
+      // Attach matching exceptions so iterator returns substituted data
+      for (const exc of exceptions) {
+        if (exc.uid !== uid) continue;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ev.relateException(exc.component as any);
+        } catch {
+          /* ignore — best-effort */
+        }
+      }
+
       if (ev.isRecurring()) {
         const it = ev.iterator();
         let next: ICAL.Time | null = null;
-        // safety cap
         for (let i = 0; i < 500; i++) {
           next = it.next() as ICAL.Time | null;
           if (!next) break;
           const startDate = next.toJSDate();
           if (startDate > windowEnd) break;
           const occ = ev.getOccurrenceDetails(next);
-          const endDate = occ.endDate.toJSDate();
-          if (endDate < windowStart) continue;
+          const occStart = occ.startDate.toJSDate();
+          const occEnd = occ.endDate.toJSDate();
+          if (occEnd < windowStart) continue;
           out.push({
             uid: `${uid}::${next.toString()}`,
             title: occ.item.summary || summary,
-            start: startDate,
-            end: endDate,
-            allDay: Boolean(next.isDate),
-            notes: description,
+            start: occStart,
+            end: occEnd,
+            allDay: Boolean(occ.startDate.isDate),
+            notes: occ.item.description || description,
           });
         }
       } else {
@@ -147,6 +180,30 @@ function parseICS(ics: string, windowStart: Date, windowEnd: Date): ParsedEvent[
       console.warn("ical parse error:", err);
     }
   }
+
+  // Standalone exception VEVENTs (no matching master in this file) — store with
+  // a recurrence-id-suffixed uid so they don't collide with the master's series.
+  for (const exc of exceptions) {
+    if (masters.some((m) => m.uid === exc.uid)) continue;
+    try {
+      const start = exc.startDate.toJSDate();
+      const end = exc.endDate.toJSDate();
+      if (end < windowStart || start > windowEnd) continue;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recId = (exc as any).recurrenceId?.toString?.() ?? "exc";
+      out.push({
+        uid: `${exc.uid}::${recId}`,
+        title: exc.summary || "(untitled)",
+        start,
+        end,
+        allDay: Boolean(exc.startDate.isDate),
+        notes: exc.description || null,
+      });
+    } catch (err) {
+      console.warn("ical exception parse error:", err);
+    }
+  }
+
   return out;
 }
 

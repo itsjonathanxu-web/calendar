@@ -47,6 +47,13 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
       .catch(() => {});
   }, [open]);
 
+  // Push the rest of the page over so the right edge of the calendar isn't covered.
+  useEffect(() => {
+    if (open) document.body.classList.add("chat-open");
+    else document.body.classList.remove("chat-open");
+    return () => document.body.classList.remove("chat-open");
+  }, [open]);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 1e9, behavior: "smooth" });
   }, [messages]);

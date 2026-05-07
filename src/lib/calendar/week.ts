@@ -33,7 +33,11 @@ export function isoDate(d: Date): string {
 
 export function parseAnchor(input: string | undefined | null): Date {
   if (!input) return new Date();
-  const d = new Date(input);
+  // Date-only strings ("2026-05-07") are interpreted as UTC midnight by Date(),
+  // which in Toronto becomes 8pm the previous day. Append a local time so we get
+  // local midnight of the intended day instead.
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(input);
+  const d = new Date(dateOnly ? input + "T00:00:00" : input);
   return isNaN(d.getTime()) ? new Date() : d;
 }
 

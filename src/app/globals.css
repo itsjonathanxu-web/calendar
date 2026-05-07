@@ -33,4 +33,9 @@ body {
   color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  transition: padding-right 0.15s ease-out;
+}
+
+body.chat-open {
+  padding-right: 20rem; /* matches ChatPanel w-80 so the right edge isn't covered */
 }

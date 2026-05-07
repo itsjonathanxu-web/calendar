@@ -261,27 +261,7 @@ export function EventDialog({
             All day
           </label>
 
-          {mode.kind === "create" && (
-            <label className="block text-xs text-[var(--color-fg-muted)]">
-              Calendar
-              <select
-                value={calendarId}
-                onChange={(e) => setCalendarId(e.target.value)}
-                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
-              >
-                {calendars.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} — {c.accountLabel}
-                  </option>
-                ))}
-                {calendars.length === 0 && (
-                  <option value="">(connect a writable Google account)</option>
-                )}
-              </select>
-            </label>
-          )}
-
-          {/* Repeat picker */}
+          {/* Repeat picker — surfaced prominently so it's clear how to make recurring events */}
           <div className="grid grid-cols-2 gap-2">
             <label className="block text-xs text-[var(--color-fg-muted)]">
               Repeat
@@ -311,6 +291,26 @@ export function EventDialog({
               </label>
             )}
           </div>
+
+          {mode.kind === "create" && (
+            <label className="block text-xs text-[var(--color-fg-muted)]">
+              Calendar
+              <select
+                value={calendarId}
+                onChange={(e) => setCalendarId(e.target.value)}
+                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
+              >
+                {calendars.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} — {c.accountLabel}
+                  </option>
+                ))}
+                {calendars.length === 0 && (
+                  <option value="">(connect a writable Google account)</option>
+                )}
+              </select>
+            </label>
+          )}
 
           {/* Edit scope (only when editing a recurring event/instance) */}
           {mode.kind === "edit" && (mode.rrule || mode.isInstance) && (

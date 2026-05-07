@@ -14,6 +14,7 @@ import { MonthGrid } from "@/components/calendar/MonthGrid";
 import { QuarterGrid } from "@/components/calendar/QuarterGrid";
 import { FilterSidebar } from "@/components/calendar/FilterSidebar";
 import { ChatToggle } from "@/components/calendar/ChatToggle";
+import { NewEventButton } from "@/components/calendar/NewEventButton";
 
 const VIEW_LABEL: Record<ViewName, string> = {
   day: "Day",
@@ -214,8 +215,13 @@ export default async function CalendarPage({
                 {VIEW_LABEL[v]}
               </Link>
             ))}
+            {calendarOptions.length > 0 && (
+              <div className="ml-2">
+                <NewEventButton calendars={calendarOptions} />
+              </div>
+            )}
             {accountCount > 0 && (
-              <form action="/api/sync/all" method="post" className="ml-2">
+              <form action="/api/sync/all" method="post" className="ml-1">
                 <button className="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 hover:bg-[var(--color-fg)]/[0.04]">
                   <RefreshCw size={12} /> Sync
                 </button>

@@ -121,6 +121,7 @@ const BUCKETS: Bucket[] = [
     sortOrder: 10,
     items: [
       { uid: "task-toronto-brainstorm", title: "TORONTO: Brainstorm", start: "2026-05-10" },
+      { uid: "task-toronto-storyboard", title: "TORONTO: Storyboarding + Music", start: "2026-05-17" },
     ],
   },
   {
@@ -138,15 +139,17 @@ const BUCKETS: Bucket[] = [
     color: "#7c7c7c",
     sortOrder: 90, // catch-all goes last
     items: [
-      // From TASKS DB (Done = false)
-      { uid: "task-find-podcasts", title: "Find Podcasts (Sequoia Summit)", start: "2026-05-09" },
-      { uid: "task-linkedin-x", title: "Linkedin + X Creators", start: "2026-05-08" },
-      { uid: "task-cinematic-lighting", title: "Learn Cinematic Lighting (Udemy / Reilin Joey)", start: "2026-05-09" },
-      { uid: "task-sg-creators", title: "Reach out to Singapore travel/video creators on LinkedIn", start: "2026-06-30", notes: "5 coffee chats Aug–Dec" },
-      { uid: "task-buy-cred", title: "BUY CRED", start: "2026-05-17" },
+      // From TASKS DB (Done = false), pulled via Notion search 2026-05-07.
+      // Verified live against the Tasks data source at collection://2de59533-7c79-812f-a312-000b35ecaac9.
+      { uid: "task-find-podcasts", title: "Find Podcasts", start: "2026-05-09", notes: "Sequioa Summit\nhttps://www.acquired.fm/" },
+      { uid: "task-linkedin-x", title: "Look into LinkedIn and X creators", start: "2026-05-08" },
+      { uid: "task-cinematic-lighting", title: "Learn Cinematic Lighting", start: "2026-05-09", notes: "Udemy: Cinematic Lighting · Reilin Joey Secret Sauce · Filmmakers Academy" },
+      { uid: "task-tell-team-lead", title: "Tell Team Lead — Leaving for NUS MDes + Surgery", start: "2026-05-11", notes: "Flying out July 24, 2026. Surgery end of May." },
       { uid: "task-plan-sea", title: "Plan Travel Around SEA", start: "2026-05-16" },
-      { uid: "task-claude-course", title: "Claude Course (Claude 101 + AI Fluency)", start: "2026-05-30" },
-      { uid: "task-tell-team-lead", title: "Tell Team Lead — Leaving for NUS MDes + Surgery", start: "2026-05-11" },
+      { uid: "task-buy-cred", title: "BUY CRED", start: "2026-05-17" },
+      { uid: "task-claude-course", title: "Claude Course", start: "2026-05-30", notes: "Claude 101 · Claude Course · AI Fluency" },
+      { uid: "task-yc-app", title: "Draft Y Combinator Application", start: "2026-11-30" },
+      { uid: "task-sg-creators", title: "Reach out to Singapore travel/video creators on LinkedIn", start: "2026-06-30", notes: "5 coffee chats Aug–Dec" },
     ],
   },
 ];
