@@ -36,6 +36,13 @@ body {
 body.chat-open {
   padding-right: 20rem;
 }
+@media (max-width: 1023px) {
+  /* On mobile, chat is a full-screen sheet, so don't squeeze the calendar
+     behind it with a 20rem right pad. */
+  body.chat-open {
+    padding-right: 0;
+  }
+}
 
 /* Frosted glass — the primary surface treatment.
    Apply via class="glass" on side panels, headers, dialogs, popovers. */
@@ -128,6 +135,31 @@ body.chat-open {
 @media (max-width: 1023px) {
   .desktop-only {
     display: none !important;
+  }
+}
+
+/* Mobile-only glass card. On desktop the wrapper dissolves so the inner
+   layout flows as if the card weren't there. */
+.mobile-card-shell {
+  display: contents;
+}
+@media (max-width: 1023px) {
+  .mobile-card-shell {
+    display: flex;
+    flex-direction: column;
+    background-color: rgba(20, 20, 22, 0.55);
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 1.5rem;
+    overflow: hidden;
+  }
+  /* Force compact row heights on mobile month grid; the inline-style
+     `grid-template-rows: 1fr` would otherwise stretch each row to fill. */
+  .month-grid-mobile-rows {
+    flex: none !important;
+    grid-template-rows: none !important;
+    grid-auto-rows: 2.6rem !important;
   }
 }
 

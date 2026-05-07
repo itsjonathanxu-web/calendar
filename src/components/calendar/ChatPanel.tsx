@@ -175,7 +175,7 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
   if (!open) return null;
 
   return (
-    <aside className="glass-strong fixed top-0 right-0 bottom-0 w-80 z-40 flex flex-col shadow-2xl">
+    <aside className="glass-strong fixed inset-0 lg:inset-auto lg:top-0 lg:right-0 lg:bottom-0 lg:w-80 z-40 flex flex-col shadow-2xl">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Sparkles size={14} className="text-[var(--color-accent)]" />

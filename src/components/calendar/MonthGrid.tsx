@@ -46,7 +46,8 @@ export function MonthGrid({
   const dayDates = days.map((d) => new Date(d + "T00:00:00"));
   const monthDate = new Date(monthAnchor + "T00:00:00");
   const today = new Date();
-  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayLabelsLong = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayLabelsShort = ["S", "M", "T", "W", "T", "F", "S"];
   const [dialog, setDialog] = useState<DialogMode>(null);
   const [overflowKey, setOverflowKey] = useState<string | null>(null);
   // Apple-style mobile detail: tapping a cell selects it; the detail list
@@ -235,21 +236,23 @@ export function MonthGrid({
   for (let i = 0; i < dayDates.length; i += 7) weeks.push(dayDates.slice(i, i + 7));
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="glass-subtle grid grid-cols-7 border-b border-[var(--color-border)]">
-        {dayLabels.map((l) => (
-          <div
-            key={l}
-            className="px-3 py-2 text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)] text-right border-l border-[var(--color-border)] first:border-l-0"
-          >
-            {l}
-          </div>
-        ))}
-      </div>
-      <div
-        className="flex-1 grid"
-        style={{ gridTemplateRows: `repeat(${weeks.length}, minmax(0, 1fr))` }}
-      >
+    <div className="flex flex-col h-full max-lg:p-3 max-lg:gap-3">
+      <div className="mobile-card-shell">
+        <div className="glass-subtle lg:glass-subtle grid grid-cols-7 border-b border-[var(--color-border)] lg:border-b max-lg:bg-transparent max-lg:border-b-0 max-lg:py-1">
+          {dayLabelsLong.map((l, i) => (
+            <div
+              key={i}
+              className="px-1 py-2 lg:px-3 text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)] text-center lg:text-right border-l border-[var(--color-border)] lg:border-l max-lg:border-l-0 first:border-l-0"
+            >
+              <span className="lg:hidden">{dayLabelsShort[i]}</span>
+              <span className="hidden lg:inline">{l}</span>
+            </div>
+          ))}
+        </div>
+        <div
+          className="flex-1 grid month-grid-mobile-rows"
+          style={{ gridTemplateRows: `repeat(${weeks.length}, minmax(0, 1fr))` }}
+        >
         {weeks.map((wk, wi) => (
           <div
             key={wi}
@@ -293,15 +296,16 @@ export function MonthGrid({
                     isHoverTarget && "bg-white/[0.06] ring-1 ring-inset ring-white/30",
                   )}
                 >
-                  {/* Mobile: centered day number + color pill below. Desktop: top-left number with hover-add */}
+                  {/* Mobile: centered day number + a single event dot below.
+                      Desktop: top-left number with hover-add. */}
                   <div className="flex flex-col items-center lg:items-stretch lg:flex-row lg:justify-between mb-0.5">
                     <div
                       className={cn(
                         "text-sm lg:text-xs font-semibold lg:font-normal inline-flex items-center justify-center",
                         isToday
-                          ? "w-7 h-7 lg:w-5 lg:h-5 rounded-full bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+                          ? "w-7 h-7 lg:w-5 lg:h-5 rounded-full bg-white text-black"
                           : isSelected
-                            ? "w-7 h-7 lg:w-5 lg:h-5 rounded-full bg-white/15 text-[var(--color-fg)] lg:bg-transparent"
+                            ? "w-7 h-7 lg:w-5 lg:h-5 rounded-full border border-white/60 text-[var(--color-fg)] lg:border-0 lg:bg-transparent"
                             : inMonth
                               ? "text-[var(--color-fg)]"
                               : "text-[var(--color-fg-muted)]",
@@ -321,9 +325,16 @@ export function MonthGrid({
                       +
                     </button>
                   </div>
-                  {/* Mobile-only color pill — Apple-style */}
-                  <div className="lg:hidden">
-                    <ColorPill items={items} />
+                  {/* Mobile-only single dot indicator */}
+                  <div className="lg:hidden h-1.5 flex items-center justify-center mt-0.5">
+                    {items.length > 0 && (
+                      <span
+                        className={cn(
+                          "w-1 h-1 rounded-full",
+                          inMonth ? "bg-white/80" : "bg-white/30",
+                        )}
+                      />
+                    )}
                   </div>
                   {/* Desktop event tiles */}
                   <div className="hidden lg:block space-y-0.5">
@@ -424,10 +435,11 @@ export function MonthGrid({
             })}
           </div>
         ))}
+        </div>
       </div>
 
       {/* Mobile-only: Apple-style day detail list under the grid */}
-      <div className="lg:hidden border-t border-[var(--color-border)] glass-subtle max-h-[45vh] overflow-y-auto">
+      <div className="lg:hidden flex-1 min-h-0 overflow-y-auto mobile-card-shell">
         <DayDetailList
           day={selectedDay}
           items={blocksForDay(selectedDay)}
@@ -437,34 +449,6 @@ export function MonthGrid({
       </div>
 
       <EventDialog mode={dialog} onClose={() => setDialog(null)} calendars={calendars} />
-    </div>
-  );
-}
-
-// Small horizontal pill of one bar per unique calendar color present that day.
-// Mirrors Apple's mobile month grid where the day cell shows the calendars
-// that have events that day rather than the event titles themselves.
-function ColorPill({ items }: { items: SerBlock[] }) {
-  if (items.length === 0) return <div className="h-1" />;
-  const seen = new Set<string>();
-  const colors: string[] = [];
-  for (const it of items) {
-    if (seen.has(it.color)) continue;
-    seen.add(it.color);
-    colors.push(it.color);
-    if (colors.length >= 6) break;
-  }
-  return (
-    <div className="flex gap-px justify-center mt-0.5">
-      <div className="flex h-1.5 rounded-full overflow-hidden">
-        {colors.map((c, i) => (
-          <span
-            key={i}
-            className="h-full"
-            style={{ backgroundColor: c, width: 8 }}
-          />
-        ))}
-      </div>
     </div>
   );
 }
@@ -481,14 +465,14 @@ function DayDetailList({
   onAdd: () => void;
 }) {
   return (
-    <div className="px-3 py-2.5 space-y-2">
+    <div className="p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold tracking-tight">
+        <div className="text-base font-semibold tracking-tight">
           {format(day, "EEEE, MMMM d")}
         </div>
         <button
           onClick={onAdd}
-          className="text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] px-2 py-1 rounded-md hover:bg-white/5"
+          className="text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] px-2 py-1 rounded-full hover:bg-white/5"
         >
           + Add
         </button>
@@ -498,33 +482,35 @@ function DayDetailList({
           Nothing scheduled.
         </div>
       ) : (
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           {items.map((b) => (
             <button
               key={b.id}
               onClick={() => onPick(b)}
-              className="w-full flex items-stretch gap-2.5 text-left rounded-lg hover:bg-white/[0.04] p-1.5 -mx-1.5"
+              className="w-full flex items-center gap-3 text-left rounded-2xl active:bg-white/[0.05] p-3 bg-white/[0.03]"
             >
               <span
                 className="w-1 rounded-full shrink-0 self-stretch"
                 style={{ backgroundColor: b.color }}
               />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{b.title}</div>
+                <div className="text-base font-semibold leading-snug truncate">{b.title}</div>
                 {b.calendarName && (
-                  <div className="text-[11px] text-[var(--color-fg-muted)] truncate">
+                  <div className="text-xs text-[var(--color-fg-muted)] truncate mt-0.5">
                     {b.calendarName}
                   </div>
                 )}
               </div>
-              <div className="text-[11px] text-[var(--color-fg-muted)] tabular-nums text-right shrink-0">
+              <div className="shrink-0">
                 {b.allDay ? (
-                  <span>all-day</span>
+                  <span className="text-[11px] rounded-full bg-white/90 text-black px-2.5 py-1 font-medium">
+                    all-day
+                  </span>
                 ) : (
-                  <>
-                    <div>{format(new Date(b.start), "h:mm a").toLowerCase()}</div>
-                    <div>{format(new Date(b.end), "h:mm a").toLowerCase()}</div>
-                  </>
+                  <span className="text-[11px] rounded-full bg-white/90 text-black px-2.5 py-1 font-medium tabular-nums">
+                    {format(new Date(b.start), "h:mma").toLowerCase()}–
+                    {format(new Date(b.end), "h:mma").toLowerCase()}
+                  </span>
                 )}
               </div>
             </button>
