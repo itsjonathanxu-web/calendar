@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { AddTaskCategoryButton } from "./AddTaskCategoryButton";
+import { TaskModeToggle } from "./TaskModeToggle";
 
 const SOURCE_LABELS: Record<string, string> = {
   google: "Google",
@@ -68,6 +69,9 @@ export async function FilterSidebar() {
   return (
     <aside className="glass-subtle w-56 shrink-0 border-r border-[var(--color-border)] overflow-y-auto">
       <div className="p-2 space-y-5">
+        <div className="px-1">
+          <TaskModeToggle />
+        </div>
         <Section title="Scheduling">
           {Array.from(schedulingGroups.entries()).map(([key, cals]) => {
             const [source, label] = key.split("|");

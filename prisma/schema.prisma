@@ -72,6 +72,11 @@ model Event {
   // Push-notification bookkeeping — when did we last fire a "starts soon" reminder?
   notifiedAt DateTime?
 
+  // When a task is checked off in TASK MODE, we move it into the Completed
+  // calendar but remember its original calendar id here so unchecking can
+  // move it back.
+  completedFromCalendarId String?
+
   @@unique([calendarId, sourceId])
   @@index([start, end])
   @@index([notifiedAt, start])

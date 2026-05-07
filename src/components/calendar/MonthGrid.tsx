@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format, isSameDay, isSameMonth, startOfDay } from "date-fns";
 import { X } from "lucide-react";
@@ -15,6 +15,8 @@ type EventDetails = {
   title: string;
   notes: string | null;
   calendarId: string;
+  calendarName?: string;
+  section?: string;
   source: string;
   allDay: boolean;
   rrule?: string | null;
@@ -27,12 +29,14 @@ export function MonthGrid({
   monthAnchor,
   calendars = [],
   detailsById = {},
+  taskMode = false,
 }: {
   days: string[];
   blocks: SerBlock[];
   monthAnchor: string;
   calendars?: WritableCalendar[];
   detailsById?: Record<string, EventDetails>;
+  taskMode?: boolean;
 }) {
   // Days arrive as YYYY-MM-DD strings from the server. Parse them as local
   // midnight so day labels and "today" highlighting use the user's timezone,
@@ -51,6 +55,14 @@ export function MonthGrid({
     return det.source === "google" || det.source === "notion-mcp";
   }
 
+  function isTask(eventId: string): boolean {
+    return detailsById[eventId]?.section === "tasks";
+  }
+
+  function isCompleted(eventId: string): boolean {
+    return detailsById[eventId]?.calendarName === "✓ Completed";
+  }
+
   async function quickDelete(eventId: string) {
     if (!confirm("Delete this event?")) return;
     try {
@@ -63,6 +75,51 @@ export function MonthGrid({
       router.refresh();
     } catch (err) {
       alert("Could not delete: " + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  async function toggleComplete(eventId: string) {
+    try {
+      const res = await fetch("/api/events/toggle-complete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: eventId }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "toggle_failed");
+      router.refresh();
+    } catch (err) {
+      alert("Could not toggle: " + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  // HTML5 drag — simpler than pointer events for task-mode reschedule. Only
+  // active when in task mode; preserves the time-of-day, just changes the date.
+  const draggingId = useRef<string | null>(null);
+  const [hoverDayKey, setHoverDayKey] = useState<string | null>(null);
+
+  async function moveTaskToDay(eventId: string, day: Date) {
+    const ev = blocks.find((b) => b.id === eventId);
+    if (!ev) return;
+    const oldStart = new Date(ev.start);
+    const oldEnd = new Date(ev.end);
+    const newStart = new Date(day);
+    newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+    const dur = oldEnd.getTime() - oldStart.getTime();
+    const newEnd = new Date(newStart.getTime() + dur);
+    if (newStart.toDateString() === oldStart.toDateString()) return;
+    try {
+      await fetch("/api/events/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: eventId,
+          start: newStart.toISOString(),
+          end: newEnd.toISOString(),
+        }),
+      });
+      router.refresh();
+    } catch (err) {
+      console.error("[MonthGrid] move task failed:", err);
     }
   }
 
@@ -135,13 +192,32 @@ export function MonthGrid({
               const showOverflow = overflowKey === cellKey;
               const visible = items.slice(0, 4);
               const hidden = items.length - visible.length;
+              const isHoverTarget = taskMode && hoverDayKey === cellKey;
               return (
                 <div
                   key={di}
                   onDoubleClick={() => openCreate(d)}
+                  onDragOver={(e) => {
+                    if (!taskMode || !draggingId.current) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (hoverDayKey !== cellKey) setHoverDayKey(cellKey);
+                  }}
+                  onDragLeave={() => {
+                    if (hoverDayKey === cellKey) setHoverDayKey(null);
+                  }}
+                  onDrop={(e) => {
+                    if (!taskMode) return;
+                    e.preventDefault();
+                    const id = e.dataTransfer.getData("text/plain");
+                    setHoverDayKey(null);
+                    draggingId.current = null;
+                    if (id) moveTaskToDay(id, d);
+                  }}
                   className={cn(
-                    "border-l border-[var(--color-border)] first:border-l-0 px-1.5 py-1 min-h-0 overflow-visible relative group",
+                    "border-l border-[var(--color-border)] first:border-l-0 px-1.5 py-1 min-h-0 overflow-visible relative group transition-colors",
                     !inMonth && "bg-[var(--color-fg)]/[0.02] text-[var(--color-fg-muted)]",
+                    isHoverTarget && "bg-white/[0.06] ring-1 ring-inset ring-white/30",
                   )}
                 >
                   <div className="flex items-center justify-between mb-0.5">
@@ -167,33 +243,76 @@ export function MonthGrid({
                     </button>
                   </div>
                   <div className="space-y-0.5">
-                    {visible.map((b) => (
-                      <div key={b.id + cellKey} className="relative group/m-event">
-                        <button
-                          onClick={() => openEdit(b)}
-                          className="event-tile w-full text-left text-[10px] leading-snug truncate rounded-md px-1.5 py-0.5 text-white hover:opacity-90 pr-4"
-                          style={{ backgroundColor: muteColor(b.color) }}
-                          title={`${b.title}\n${format(new Date(b.start), "p")} – ${format(new Date(b.end), "p")}`}
+                    {visible.map((b) => {
+                      const taskTile = taskMode && isTask(b.id);
+                      const completed = isCompleted(b.id);
+                      return (
+                        <div
+                          key={b.id + cellKey}
+                          className="relative group/m-event"
+                          draggable={taskTile}
+                          onDragStart={(e) => {
+                            if (!taskTile) return;
+                            e.dataTransfer.setData("text/plain", b.id);
+                            e.dataTransfer.effectAllowed = "move";
+                            draggingId.current = b.id;
+                          }}
+                          onDragEnd={() => {
+                            draggingId.current = null;
+                            setHoverDayKey(null);
+                          }}
                         >
-                          {b.allDay
-                            ? b.title
-                            : `${format(new Date(b.start), "h:mma").toLowerCase()} ${b.title}`}
-                        </button>
-                        {isWritable(b.id) && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              quickDelete(b.id);
-                            }}
-                            className="absolute right-0.5 top-0 bottom-0 my-auto h-3.5 w-3.5 opacity-0 group-hover/m-event:opacity-100 rounded text-white/90 hover:text-white hover:bg-black/30 flex items-center justify-center"
-                            aria-label="Delete event"
-                            title="Delete"
+                          <div
+                            className={cn(
+                              "event-tile flex items-center gap-1 w-full text-left text-[10px] leading-snug rounded-md px-1.5 py-0.5 text-white pr-4",
+                              taskTile && "cursor-grab active:cursor-grabbing",
+                              completed && "opacity-60",
+                            )}
+                            style={{ backgroundColor: muteColor(b.color) }}
+                            title={`${b.title}\n${format(new Date(b.start), "p")} – ${format(new Date(b.end), "p")}`}
                           >
-                            <X size={9} />
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                            {taskTile && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleComplete(b.id);
+                                }}
+                                aria-label={completed ? "Uncheck" : "Mark complete"}
+                                className="shrink-0 w-3 h-3 rounded-sm border border-white/50 flex items-center justify-center bg-black/20 hover:bg-black/40"
+                              >
+                                {completed && (
+                                  <span className="text-[9px] leading-none">✓</span>
+                                )}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => openEdit(b)}
+                              className={cn(
+                                "flex-1 min-w-0 text-left truncate hover:opacity-90",
+                                completed && "line-through",
+                              )}
+                            >
+                              {b.allDay
+                                ? b.title
+                                : `${format(new Date(b.start), "h:mma").toLowerCase()} ${b.title}`}
+                            </button>
+                          </div>
+                          {isWritable(b.id) && !taskTile && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                quickDelete(b.id);
+                              }}
+                              className="absolute right-0.5 top-0 bottom-0 my-auto h-3.5 w-3.5 opacity-0 group-hover/m-event:opacity-100 rounded text-white/90 hover:text-white hover:bg-black/30 flex items-center justify-center"
+                              aria-label="Delete event"
+                              title="Delete"
+                            >
+                              <X size={9} />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                     {hidden > 0 && (
                       <div className="relative">
                         <button

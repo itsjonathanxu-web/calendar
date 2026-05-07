@@ -34,11 +34,12 @@ function localDayKey(d: Date): string {
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ w?: string; view?: string }>;
+  searchParams: Promise<{ w?: string; view?: string; tm?: string }>;
 }) {
-  const { w, view: viewParam } = await searchParams;
+  const { w, view: viewParam, tm } = await searchParams;
   const view = parseView(viewParam);
   const anchor = parseAnchor(w);
+  const taskMode = tm === "1";
   const { start, end } = rangeForView(view, anchor);
 
   // Pull non-recurring events that overlap the window AND any recurring masters
@@ -122,6 +123,8 @@ export default async function CalendarPage({
       title: string;
       notes: string | null;
       calendarId: string;
+      calendarName: string;
+      section: string;
       source: string;
       allDay: boolean;
       rrule: string | null;
@@ -134,6 +137,8 @@ export default async function CalendarPage({
       title: ev.title,
       notes: ev.notes,
       calendarId: ev.calendarId,
+      calendarName: ev.calendar.name,
+      section: (ev.calendar as unknown as { section?: string }).section ?? "scheduling",
       source: ev.calendar.account.source,
       allDay: ev.allDay,
       rrule: ev.rrule,
@@ -265,6 +270,7 @@ export default async function CalendarPage({
             monthAnchor={isoDate(anchor)}
             calendars={calendarOptions}
             detailsById={detailsById}
+            taskMode={taskMode}
           />
         )}
       </div>
