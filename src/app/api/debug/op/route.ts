@@ -46,6 +46,7 @@ type UpdateCategoryOp = {
   name?: string;
   color?: string;
   enabled?: boolean;
+  section?: "tasks" | "scheduling";
 };
 
 type DeleteCategoryOp = { op: "delete_category"; id: string };
@@ -170,6 +171,7 @@ export async function POST(request: Request) {
           if (op.name !== undefined) data.name = op.name;
           if (op.color !== undefined) data.color = op.color;
           if (op.enabled !== undefined) data.enabled = op.enabled;
+          if (op.section !== undefined) data.section = op.section;
           const cal = await db.calendar.update({ where: { id: op.id }, data });
           results.push({ ok: true, result: { id: cal.id, name: cal.name } });
           break;
