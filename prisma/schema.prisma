@@ -150,6 +150,16 @@ model Settings {
   reminderLeadMin   Int     @default(15) // minutes before an event to notify
 }
 
+// Cron heartbeat — one row per job kind, updated on each successful tick.
+// On startup the cron loop reads the last tick to detect (and replay) missed
+// runs caused by Fly machine suspends/restarts.
+model JobRun {
+  kind        String   @id           // "reminders" | "backup"
+  lastRunAt   DateTime
+  lastError   String?
+  updatedAt   DateTime @updatedAt
+}
+
 // Browser/device push subscription. One row per device that's opted in.
 model PushSubscription {
   id        String   @id @default(cuid())

@@ -66,4 +66,11 @@ COPY --from=build /app/src/generated ./src/generated
 
 # Make sure the data dir exists before Prisma touches it (volume gets mounted at runtime).
 EXPOSE 3000
-CMD ["sh", "-c", "mkdir -p /app/data && npx prisma db push --accept-data-loss && exec npx next start -H 0.0.0.0 -p 3000"]
+# Boot sequence:
+# 1. Ensure the data + secrets + backups dirs exist on the volume.
+# 2. Snapshot the DB before any schema changes hit (cheap insurance against
+#    a bad `prisma db push`).
+# 3. Run `prisma db push` WITHOUT --accept-data-loss so destructive changes
+#    (column drops/renames) abort the boot instead of silently wiping data.
+# 4. Start Next.
+CMD ["sh", "-c", "mkdir -p /app/data /app/data/secrets /app/data/backups && (test -f /app/data/dev.db && cp /app/data/dev.db /app/data/backups/db-pre-deploy-$(date -u +%Y%m%d-%H%M%S).sqlite || true) && npx prisma db push && exec npx next start -H 0.0.0.0 -p 3000"]

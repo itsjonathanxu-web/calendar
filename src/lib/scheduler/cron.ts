@@ -1,29 +1,88 @@
 import { db } from "@/lib/db";
 import { sendPushToAll } from "@/lib/push";
 import { format } from "date-fns";
+import { snapshotDb } from "@/lib/backup";
 
 const TICK_MS = 60_000; // every minute
+const BACKUP_INTERVAL_MS = 24 * 60 * 60_000; // daily
 let started = false;
 
 export function startCron() {
   if (started) return;
   started = true;
   console.log("[cron] starting reminder loop");
-  // Run once immediately, then on every tick.
-  runTick().catch((err) => console.error("[cron] tick error:", err));
-  setInterval(() => {
-    runTick().catch((err) => console.error("[cron] tick error:", err));
-  }, TICK_MS);
+  // On boot: detect and replay any missed window before resuming the regular cadence.
+  bootReplay()
+    .catch((err) => console.error("[cron] boot replay error:", err))
+    .finally(() => {
+      runTick().catch((err) => console.error("[cron] tick error:", err));
+      setInterval(() => {
+        runTick().catch((err) => console.error("[cron] tick error:", err));
+      }, TICK_MS);
+    });
+}
+
+async function bootReplay() {
+  // If the last "reminders" run was > 5 min ago, fire any reminders that came
+  // due in the gap. This recovers from Fly machine suspends/restarts where the
+  // setInterval timer doesn't survive.
+  const last = await db.jobRun.findUnique({ where: { kind: "reminders" } });
+  if (!last) return;
+  const now = new Date();
+  const gapMs = now.getTime() - last.lastRunAt.getTime();
+  if (gapMs < 5 * 60_000) return;
+  const gapMin = Math.round(gapMs / 60_000);
+  console.log(`[cron] boot: ${gapMin}m gap detected, replaying missed reminders`);
+  // Use the gap as a leadMin so anything that came due in the missed window
+  // gets caught even if it was scheduled to fire 30+ min ago.
+  await fireEventReminders(last.lastRunAt, Math.min(180, gapMin));
+  await fireStandaloneReminders(now);
+}
+
+async function recordRun(kind: string, error?: unknown): Promise<void> {
+  await db.jobRun.upsert({
+    where: { kind },
+    create: {
+      kind,
+      lastRunAt: new Date(),
+      lastError: error ? String(error) : null,
+    },
+    update: {
+      lastRunAt: new Date(),
+      lastError: error ? String(error) : null,
+    },
+  });
 }
 
 async function runTick() {
   const now = new Date();
   const settings = await db.settings.findUnique({ where: { id: "settings" } });
-  if (settings && !settings.remindersEnabled) return;
+  if (settings && !settings.remindersEnabled) {
+    await recordRun("reminders");
+    return;
+  }
   const lead = settings?.reminderLeadMin ?? 15;
 
-  await fireEventReminders(now, lead);
-  await fireStandaloneReminders(now);
+  try {
+    await fireEventReminders(now, lead);
+    await fireStandaloneReminders(now);
+    await recordRun("reminders");
+  } catch (err) {
+    console.error("[cron] tick failed:", err);
+    await recordRun("reminders", err);
+  }
+
+  // Daily backup — fires whenever last backup is older than the interval
+  const lastBackup = await db.jobRun.findUnique({ where: { kind: "backup" } });
+  if (!lastBackup || now.getTime() - lastBackup.lastRunAt.getTime() > BACKUP_INTERVAL_MS) {
+    try {
+      await snapshotDb();
+      await recordRun("backup");
+    } catch (err) {
+      console.error("[cron] backup failed:", err);
+      await recordRun("backup", err);
+    }
+  }
 }
 
 async function fireEventReminders(now: Date, leadMin: number) {
