@@ -34,8 +34,11 @@ export function MonthGrid({
   calendars?: WritableCalendar[];
   detailsById?: Record<string, EventDetails>;
 }) {
-  const dayDates = days.map((d) => new Date(d));
-  const monthDate = new Date(monthAnchor);
+  // Days arrive as YYYY-MM-DD strings from the server. Parse them as local
+  // midnight so day labels and "today" highlighting use the user's timezone,
+  // not UTC.
+  const dayDates = days.map((d) => new Date(d + "T00:00:00"));
+  const monthDate = new Date(monthAnchor + "T00:00:00");
   const today = new Date();
   const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const [dialog, setDialog] = useState<DialogMode>(null);

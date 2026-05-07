@@ -3,8 +3,6 @@ import {
   endOfMonth,
   startOfWeek,
   endOfWeek,
-  startOfDay,
-  endOfDay,
   addDays,
   addMonths,
   subMonths,
@@ -15,15 +13,13 @@ import {
   subQuarters,
 } from "date-fns";
 
-export type ViewName = "day" | "week" | "month" | "quarter";
-export const VIEWS: ViewName[] = ["day", "week", "month", "quarter"];
+export type ViewName = "week" | "month" | "quarter";
+export const VIEWS: ViewName[] = ["week", "month", "quarter"];
 
 const WEEK_OPTS = { weekStartsOn: 0 as const }; // Sunday
 
 export function rangeForView(view: ViewName, anchor: Date): { start: Date; end: Date } {
   switch (view) {
-    case "day":
-      return { start: startOfDay(anchor), end: endOfDay(anchor) };
     case "week":
       return { start: startOfWeek(anchor, WEEK_OPTS), end: endOfWeek(anchor, WEEK_OPTS) };
     case "month": {
@@ -38,8 +34,6 @@ export function rangeForView(view: ViewName, anchor: Date): { start: Date; end: 
 
 export function shiftAnchor(view: ViewName, anchor: Date, dir: 1 | -1): Date {
   switch (view) {
-    case "day":
-      return addDays(anchor, dir);
     case "week":
       return addDays(anchor, dir * 7);
     case "month":

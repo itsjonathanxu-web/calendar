@@ -5,7 +5,7 @@ import { format, isSameDay, addMinutes } from "date-fns";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { Block, LaidOutBlock } from "@/lib/calendar/week";
+import { layoutWeek, type Block, type LaidOutBlock } from "@/lib/calendar/week";
 import { EventDialog, type DialogMode, type WritableCalendar } from "./EventDialog";
 
 const HOUR_HEIGHT = 48;
@@ -14,7 +14,28 @@ const SNAP_MIN = 15;
 const DAY_MIN = 24 * 60;
 
 type SerBlock = Omit<Block, "start" | "end"> & { start: string; end: string };
-type SerLaidOut = Omit<LaidOutBlock, "start" | "end"> & { start: string; end: string };
+
+function parseLocalDate(s: string): Date {
+  // "2026-05-07" → midnight of May 7 in the user's local timezone (instead of
+  // UTC midnight, which JS does by default for date-only strings).
+  return new Date(s + "T00:00:00");
+}
+
+function formatTimeRange(start: Date, end: Date): string {
+  const sH = start.getHours();
+  const sM = start.getMinutes();
+  const eH = end.getHours();
+  const eM = end.getMinutes();
+  const sPeriod = sH >= 12 ? "PM" : "AM";
+  const ePeriod = eH >= 12 ? "PM" : "AM";
+  const sH12 = ((sH + 11) % 12) + 1;
+  const eH12 = ((eH + 11) % 12) + 1;
+  const sStr = sM === 0 ? `${sH12}` : `${sH12}:${String(sM).padStart(2, "0")}`;
+  const eStr = eM === 0 ? `${eH12}` : `${eH12}:${String(eM).padStart(2, "0")}`;
+  // Same period: "1–2 PM" / "8:30–5:30" — only suffix on the end
+  if (sPeriod === ePeriod) return `${sStr}–${eStr} ${ePeriod}`;
+  return `${sStr} ${sPeriod}–${eStr} ${ePeriod}`;
+}
 
 type EventDetails = {
   id: string;
@@ -56,20 +77,38 @@ type DragState =
     };
 
 export function WeekGrid({
-  days,
-  timed,
-  allDay,
+  anchor,
+  blocks,
   calendars = [],
   detailsById = {},
 }: {
-  days: string[];
-  timed: SerLaidOut[];
-  allDay: SerBlock[];
+  anchor: string;
+  blocks: SerBlock[];
   calendars?: WritableCalendar[];
   detailsById?: Record<string, EventDetails>;
 }) {
   const router = useRouter();
-  const dayDates = useMemo(() => days.map((d) => new Date(d)), [days]);
+  const dayDates = useMemo(() => {
+    // Compute Sunday-anchored week of `anchor` in the user's local timezone.
+    const a = parseLocalDate(anchor);
+    const dayIdx = a.getDay();
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(a);
+      d.setDate(d.getDate() - dayIdx + i);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    });
+  }, [anchor]);
+  const blockObjs: Block[] = useMemo(
+    () =>
+      blocks.map((b) => ({
+        ...b,
+        start: new Date(b.start),
+        end: new Date(b.end),
+      })),
+    [blocks],
+  );
+  const { timed, allDay } = useMemo(() => layoutWeek(blockObjs, dayDates), [blockObjs, dayDates]);
   const today = new Date();
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -115,15 +154,15 @@ export function WeekGrid({
     });
   }
 
-  function openEdit(b: SerLaidOut) {
+  function openEdit(b: LaidOutBlock) {
     const det = detailsById[b.id];
     if (!det) return;
     setDialog({
       kind: "edit",
       eventId: b.id,
       title: det.title,
-      start: new Date(b.start),
-      end: new Date(b.end),
+      start: b.start,
+      end: b.end,
       allDay: det.allDay,
       notes: det.notes,
       calendarId: det.calendarId,
@@ -133,7 +172,7 @@ export function WeekGrid({
     });
   }
 
-  function eventPointerDown(e: React.PointerEvent, b: SerLaidOut) {
+  function eventPointerDown(e: React.PointerEvent, b: LaidOutBlock) {
     if (!isWritable(b.id)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -151,7 +190,7 @@ export function WeekGrid({
     });
   }
 
-  function resizePointerDown(e: React.PointerEvent, b: SerLaidOut) {
+  function resizePointerDown(e: React.PointerEvent, b: LaidOutBlock) {
     if (!isWritable(b.id)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -225,7 +264,7 @@ export function WeekGrid({
       if (!block) return;
       if (!isWritable(block.id)) return;
       const newDayIdx = Math.max(0, Math.min(dayDates.length - 1, block.dayIndex + d.deltaDay));
-      const oldStart = new Date(block.start);
+      const oldStart = block.start;
       const newStart = new Date(dayDates[newDayIdx]);
       newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
       newStart.setMinutes(newStart.getMinutes() + d.deltaMin);
@@ -245,7 +284,7 @@ export function WeekGrid({
       const block = timed.find((b) => b.id === d.eventId);
       if (!block) return;
       const newDuration = Math.max(SNAP_MIN, d.initialDurationMin + d.deltaMin);
-      const start = new Date(block.start);
+      const start = block.start;
       const end = addMinutes(start, newDuration);
       try {
         await fetchPost("/api/events/update", {
@@ -343,7 +382,7 @@ export function WeekGrid({
           </div>
           {dayDates.map((d, i) => {
             const items = allDay.filter(
-              (b) => new Date(b.start) <= addDay(d, 1) && new Date(b.end) > d,
+              (b) => b.start <= addDay(d, 1) && b.end > d,
             );
             return (
               <div
@@ -360,8 +399,8 @@ export function WeekGrid({
                           kind: "edit",
                           eventId: it.id,
                           title: det.title,
-                          start: new Date(it.start),
-                          end: new Date(it.end),
+                          start: it.start,
+                          end: it.end,
                           allDay: det.allDay,
                           notes: det.notes,
                           calendarId: det.calendarId,
@@ -499,11 +538,11 @@ export function WeekGrid({
                           width: `calc(${widthPct}% - 4px)`,
                           backgroundColor: b.color,
                         }}
-                        title={`${b.title}\n${formatTime(b.start)} – ${formatTime(b.end)}\n${b.calendarName}`}
+                        title={`${b.title}\n${formatTimeRange(b.start, b.end)}\n${b.calendarName}`}
                       >
                         <div className="font-medium truncate pr-4">{b.title}</div>
                         {height > 28 && (
-                          <div className="opacity-80 truncate">{formatTime(b.start)}</div>
+                          <div className="opacity-80 truncate">{formatTimeRange(b.start, b.end)}</div>
                         )}
                         {writable && (
                           <button
@@ -538,12 +577,6 @@ export function WeekGrid({
       <EventDialog mode={dialog} onClose={() => setDialog(null)} calendars={calendars} />
     </div>
   );
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const m = d.getMinutes();
-  return format(d, m === 0 ? "h a" : "h:mm a");
 }
 
 function addDay(d: Date, n: number): Date {

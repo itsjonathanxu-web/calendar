@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
-import { addDays, format } from "date-fns";
+import { format } from "date-fns";
 import { db } from "@/lib/db";
 import {
   isoDate,
-  layoutWeek,
   parseAnchor,
   type Block,
 } from "@/lib/calendar/week";
@@ -17,7 +16,6 @@ import { ChatToggle } from "@/components/calendar/ChatToggle";
 import { NewEventButton } from "@/components/calendar/NewEventButton";
 
 const VIEW_LABEL: Record<ViewName, string> = {
-  day: "Day",
   week: "Week",
   month: "Month",
   quarter: "Quarter",
@@ -25,6 +23,14 @@ const VIEW_LABEL: Record<ViewName, string> = {
 
 function parseView(v: string | undefined): ViewName {
   return (VIEWS as string[]).includes(v ?? "") ? (v as ViewName) : "week";
+}
+
+function localDayKey(d: Date): string {
+  // YYYY-MM-DD using LOCAL calendar (server is UTC; that's fine for dates pulled from URL anchor + index math).
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export default async function CalendarPage({
@@ -161,7 +167,6 @@ export default async function CalendarPage({
   const today = isoDate(new Date());
 
   const heading = (() => {
-    if (view === "day") return format(anchor, "EEEE, MMM d");
     if (view === "month") return format(anchor, "MMMM yyyy");
     if (view === "quarter") return `Q${Math.floor(anchor.getMonth() / 3) + 1} ${format(anchor, "yyyy")}`;
     // week
@@ -245,23 +250,26 @@ export default async function CalendarPage({
               </Link>
             </div>
           </div>
-        ) : view === "day" || view === "week" ? (
-          <TimeGridView
-            view={view}
-            anchor={anchor}
-            blocks={blocks}
-            calendars={calendarOptions}
-            detailsById={detailsById}
-          />
-        ) : view === "month" ? (
-          <MonthGrid
-            days={monthDays(anchor).map((d) => d.toISOString())}
+        ) : view === "week" ? (
+          <WeekGrid
+            anchor={isoDate(anchor)}
             blocks={blocks.map((b) => ({
               ...b,
               start: b.start.toISOString(),
               end: b.end.toISOString(),
             }))}
-            monthAnchor={anchor.toISOString()}
+            calendars={calendarOptions}
+            detailsById={detailsById}
+          />
+        ) : view === "month" ? (
+          <MonthGrid
+            days={monthDays(anchor).map((d) => localDayKey(d))}
+            blocks={blocks.map((b) => ({
+              ...b,
+              start: b.start.toISOString(),
+              end: b.end.toISOString(),
+            }))}
+            monthAnchor={isoDate(anchor)}
             calendars={calendarOptions}
             detailsById={detailsById}
           />
@@ -288,55 +296,3 @@ export default async function CalendarPage({
   );
 }
 
-function TimeGridView({
-  view,
-  anchor,
-  blocks,
-  calendars,
-  detailsById,
-}: {
-  view: "day" | "week";
-  anchor: Date;
-  blocks: Block[];
-  calendars: { id: string; name: string; color: string; source: string; accountLabel: string }[];
-  detailsById: Record<
-    string,
-    {
-      id: string;
-      title: string;
-      notes: string | null;
-      calendarId: string;
-      source: string;
-      allDay: boolean;
-      rrule: string | null;
-      isInstance: boolean;
-    }
-  >;
-}) {
-  const days =
-    view === "day"
-      ? [anchor]
-      : Array.from({ length: 7 }, (_, i) => {
-          // Sunday-anchored: getDay() returns 0=Sun..6=Sat
-          const d = new Date(anchor);
-          const dayIdx = d.getDay();
-          d.setDate(d.getDate() - dayIdx + i);
-          d.setHours(0, 0, 0, 0);
-          return d;
-        });
-
-  const { timed, allDay } = layoutWeek(blocks, days);
-  const timedSer = timed.map((b) => ({ ...b, start: b.start.toISOString(), end: b.end.toISOString() }));
-  const allDaySer = allDay.map((b) => ({ ...b, start: b.start.toISOString(), end: b.end.toISOString() }));
-  const daysSer = days.map((d) => d.toISOString());
-
-  return (
-    <WeekGrid
-      days={daysSer}
-      timed={timedSer}
-      allDay={allDaySer}
-      calendars={calendars}
-      detailsById={detailsById}
-    />
-  );
-}
