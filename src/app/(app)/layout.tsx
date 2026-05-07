@@ -1,4 +1,5 @@
 import { Sidebar } from "@/components/Sidebar";
+import { UndoListener } from "@/components/UndoListener";
 
 // All authenticated pages hit the SQLite database. Force runtime rendering so the
 // build doesn't try to prerender them (the volume / DB doesn't exist at build time).
@@ -9,6 +10,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
       <main className="flex-1 min-w-0 overflow-auto">{children}</main>
+      <UndoListener />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { Block } from "@/lib/calendar/week";
 import { EventDialog, type DialogMode, type WritableCalendar } from "./EventDialog";
+import { pushUndo, postJson } from "@/lib/undo";
 
 type SerBlock = Omit<Block, "start" | "end"> & { start: string; end: string };
 
@@ -79,6 +80,8 @@ export function MonthGrid({
   }
 
   async function toggleComplete(eventId: string) {
+    const det = detailsById[eventId];
+    const wasCompleted = det?.calendarName === "✓ Completed";
     try {
       const res = await fetch("/api/events/toggle-complete", {
         method: "POST",
@@ -86,6 +89,15 @@ export function MonthGrid({
         body: JSON.stringify({ id: eventId }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "toggle_failed");
+      pushUndo({
+        label: wasCompleted ? `Uncheck ${det?.title ?? "task"}` : `Complete ${det?.title ?? "task"}`,
+        undo: async () => {
+          await postJson("/api/events/toggle-complete", { id: eventId });
+        },
+        redo: async () => {
+          await postJson("/api/events/toggle-complete", { id: eventId });
+        },
+      });
       router.refresh();
     } catch (err) {
       alert("Could not toggle: " + (err instanceof Error ? err.message : String(err)));
@@ -125,14 +137,27 @@ export function MonthGrid({
       : `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
     if (oldKey === newKey) return;
     try {
-      await fetch("/api/events/update", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          id: eventId,
-          start: newStart.toISOString(),
-          end: newEnd.toISOString(),
-        }),
+      await postJson("/api/events/update", {
+        id: eventId,
+        start: newStart.toISOString(),
+        end: newEnd.toISOString(),
+      });
+      pushUndo({
+        label: `Move ${ev.title}`,
+        undo: async () => {
+          await postJson("/api/events/update", {
+            id: eventId,
+            start: oldStart.toISOString(),
+            end: oldEnd.toISOString(),
+          });
+        },
+        redo: async () => {
+          await postJson("/api/events/update", {
+            id: eventId,
+            start: newStart.toISOString(),
+            end: newEnd.toISOString(),
+          });
+        },
       });
       router.refresh();
     } catch (err) {

@@ -13,6 +13,7 @@ import { MonthGrid } from "@/components/calendar/MonthGrid";
 import { FilterSidebar } from "@/components/calendar/FilterSidebar";
 import { ChatToggle } from "@/components/calendar/ChatToggle";
 import { NewEventButton } from "@/components/calendar/NewEventButton";
+import { KeyboardNav } from "@/components/calendar/KeyboardNav";
 
 const VIEW_LABEL: Record<ViewName, string> = {
   week: "Week",
@@ -183,24 +184,30 @@ export default async function CalendarPage({
               <Link
                 aria-label="Previous"
                 href={`/calendar?view=${view}&w=${prev}`}
-                className="p-1 rounded hover:bg-[var(--color-fg)]/[0.06]"
+                title="Previous (←)"
+                className="w-8 h-8 flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-fg)]/[0.06] hover:text-[var(--color-fg)] active:scale-95 transition-transform"
               >
-                <ChevronLeft size={16} />
+                <ChevronLeft size={18} />
               </Link>
               <Link
                 href={`/calendar?view=${view}&w=${today}`}
-                className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-fg)]/[0.04]"
+                className="text-xs px-2.5 h-8 flex items-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-fg)]/[0.04]"
               >
                 Today
               </Link>
               <Link
                 aria-label="Next"
                 href={`/calendar?view=${view}&w=${next}`}
-                className="p-1 rounded hover:bg-[var(--color-fg)]/[0.06]"
+                title="Next (→)"
+                className="w-8 h-8 flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-fg)]/[0.06] hover:text-[var(--color-fg)] active:scale-95 transition-transform"
               >
-                <ChevronRight size={16} />
+                <ChevronRight size={18} />
               </Link>
             </div>
+            <KeyboardNav
+              prevHref={`/calendar?view=${view}&w=${prev}`}
+              nextHref={`/calendar?view=${view}&w=${next}`}
+            />
           </div>
 
           <div className="flex items-center gap-1 text-xs">

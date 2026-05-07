@@ -7,6 +7,7 @@ import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { layoutWeek, type Block, type LaidOutBlock } from "@/lib/calendar/week";
 import { EventDialog, type DialogMode, type WritableCalendar } from "./EventDialog";
+import { pushUndo, postJson } from "@/lib/undo";
 
 const HOUR_HEIGHT = 48;
 const TOTAL_HEIGHT = 24 * HOUR_HEIGHT;
@@ -59,6 +60,10 @@ type DragState =
       initialDayIndex: number;
       deltaMin: number;
       deltaDay: number;
+      // Raw pixel motion since pointer-down. Used to distinguish a click
+      // (open dialog) from a tiny drag (move event by less than a snap step).
+      pixelDx: number;
+      pixelDy: number;
     }
   | {
       kind: "resize";
@@ -187,6 +192,8 @@ export function WeekGrid({
       initialDayIndex: b.dayIndex,
       deltaMin: 0,
       deltaDay: 0,
+      pixelDx: 0,
+      pixelDy: 0,
     });
   }
 
@@ -239,6 +246,8 @@ export function WeekGrid({
         ...d,
         deltaMin: snap((dy / HOUR_HEIGHT) * 60),
         deltaDay: Math.round(dx / colW),
+        pixelDx: dx,
+        pixelDy: dy,
       });
     } else if (d.kind === "resize") {
       const dy = e.clientY - d.pointerStartY;
@@ -255,16 +264,25 @@ export function WeekGrid({
     (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
 
     if (d.kind === "move") {
-      if (d.deltaMin === 0 && d.deltaDay === 0) {
+      // Distinguish a click (no real motion) from a tiny drag using raw
+      // pixel delta. Snapped (deltaMin/deltaDay) can both be 0 even when the
+      // user clearly dragged (just less than 15 minutes vertically).
+      const pxMoved = Math.hypot(d.pixelDx, d.pixelDy);
+      if (pxMoved < 4) {
         const block = timed.find((b) => b.id === d.eventId);
         if (block) openEdit(block);
         return;
       }
+      // Below the snap threshold but past the click threshold — user dragged
+      // but not far enough to register a different time. Don't update, don't
+      // pop the dialog.
+      if (d.deltaMin === 0 && d.deltaDay === 0) return;
       const block = timed.find((b) => b.id === d.eventId);
       if (!block) return;
       if (!isWritable(block.id)) return;
       const newDayIdx = Math.max(0, Math.min(dayDates.length - 1, block.dayIndex + d.deltaDay));
       const oldStart = block.start;
+      const oldEnd = block.end;
       const newStart = new Date(dayDates[newDayIdx]);
       newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
       newStart.setMinutes(newStart.getMinutes() + d.deltaMin);
@@ -274,6 +292,23 @@ export function WeekGrid({
           id: d.eventId,
           start: newStart.toISOString(),
           end: newEnd.toISOString(),
+        });
+        pushUndo({
+          label: `Move ${block.title}`,
+          undo: async () => {
+            await postJson("/api/events/update", {
+              id: d.eventId,
+              start: oldStart.toISOString(),
+              end: oldEnd.toISOString(),
+            });
+          },
+          redo: async () => {
+            await postJson("/api/events/update", {
+              id: d.eventId,
+              start: newStart.toISOString(),
+              end: newEnd.toISOString(),
+            });
+          },
         });
       } catch (err) {
         console.error("move failed:", err);
@@ -285,12 +320,30 @@ export function WeekGrid({
       if (!block) return;
       const newDuration = Math.max(SNAP_MIN, d.initialDurationMin + d.deltaMin);
       const start = block.start;
+      const oldEnd = block.end;
       const end = addMinutes(start, newDuration);
       try {
         await fetchPost("/api/events/update", {
           id: d.eventId,
           start: start.toISOString(),
           end: end.toISOString(),
+        });
+        pushUndo({
+          label: `Resize ${block.title}`,
+          undo: async () => {
+            await postJson("/api/events/update", {
+              id: d.eventId,
+              start: start.toISOString(),
+              end: oldEnd.toISOString(),
+            });
+          },
+          redo: async () => {
+            await postJson("/api/events/update", {
+              id: d.eventId,
+              start: start.toISOString(),
+              end: end.toISOString(),
+            });
+          },
         });
       } catch (err) {
         console.error("resize failed:", err);
