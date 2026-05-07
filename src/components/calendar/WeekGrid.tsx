@@ -416,21 +416,20 @@ export function WeekGrid({
           return (
             <div
               key={i}
-              className={cn(
-                "px-2 py-2 text-center border-l border-[var(--color-border)]",
-                isToday && "bg-[var(--color-accent)]/[0.06]",
-              )}
+              className="px-2 py-2 text-center border-l border-[var(--color-border)]"
             >
               <div className="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
                 {format(d, "EEE")}
               </div>
-              <div
-                className={cn(
-                  "text-lg font-semibold",
-                  isToday ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]",
-                )}
-              >
-                {format(d, "d")}
+              <div className="flex items-center justify-center mt-0.5">
+                <div
+                  className={cn(
+                    "text-base font-semibold inline-flex items-center justify-center w-7 h-7 rounded-full",
+                    isToday ? "bg-white text-black" : "text-[var(--color-fg)]",
+                  )}
+                >
+                  {format(d, "d")}
+                </div>
               </div>
             </div>
           );
@@ -522,10 +521,7 @@ export function WeekGrid({
               <div
                 key={i}
                 onPointerDown={(e) => dayCellPointerDown(e, i)}
-                className={cn(
-                  "relative border-l border-[var(--color-border)] cursor-crosshair",
-                  i === todayIdx && "bg-[var(--color-accent)]/[0.03]",
-                )}
+                className="relative border-l border-[var(--color-border)] cursor-crosshair"
               >
                 {Array.from({ length: 24 }, (_, h) => (
                   <div
