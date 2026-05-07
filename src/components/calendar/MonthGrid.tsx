@@ -108,7 +108,7 @@ export function MonthGrid({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="grid grid-cols-7 border-b border-[var(--color-border)] bg-[var(--color-bg-elev)]">
+      <div className="glass-subtle grid grid-cols-7 border-b border-[var(--color-border)]">
         {dayLabels.map((l) => (
           <div
             key={l}
@@ -171,8 +171,8 @@ export function MonthGrid({
                       <div key={b.id + cellKey} className="relative group/m-event">
                         <button
                           onClick={() => openEdit(b)}
-                          className="w-full text-left text-[10px] leading-snug truncate rounded px-1.5 py-0.5 text-white hover:opacity-90 pr-4"
-                          style={{ backgroundColor: b.color }}
+                          className="event-tile w-full text-left text-[10px] leading-snug truncate rounded-md px-1.5 py-0.5 text-white hover:opacity-90 pr-4"
+                          style={{ backgroundColor: muteColor(b.color) }}
                           title={`${b.title}\n${format(new Date(b.start), "p")} – ${format(new Date(b.end), "p")}`}
                         >
                           {b.allDay
@@ -243,7 +243,7 @@ function DayOverflowPopover({
     <>
       {/* click-outside catcher */}
       <div className="fixed inset-0 z-30" onClick={onClose} />
-      <div className="absolute z-40 mt-1 left-0 w-64 max-h-80 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] shadow-xl p-3">
+      <div className="glass-strong absolute z-40 mt-1 left-0 w-64 max-h-80 overflow-y-auto rounded-xl shadow-2xl p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="text-sm font-semibold">{format(day, "EEEE, MMM d")}</div>
           <button
@@ -279,4 +279,13 @@ function DayOverflowPopover({
       </div>
     </>
   );
+}
+
+function muteColor(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return "rgba(120, 120, 130, 0.55)";
+  const r = parseInt(m[1].slice(0, 2), 16);
+  const g = parseInt(m[1].slice(2, 4), 16);
+  const b = parseInt(m[1].slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, 0.55)`;
 }

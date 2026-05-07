@@ -120,7 +120,10 @@ export function EventDialog({
 
   const editable =
     mode.kind === "create" ||
-    (mode.kind === "edit" && (mode.source === "google" || mode.source === "notion"));
+    (mode.kind === "edit" &&
+      (mode.source === "google" ||
+        mode.source === "notion" ||
+        mode.source === "notion-mcp"));
 
   async function save() {
     if (!mode) return;
@@ -205,9 +208,9 @@ export function EventDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] shadow-xl"
+        className="glass-strong w-full max-w-md rounded-2xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)]">

@@ -171,7 +171,7 @@ export default async function CalendarPage({
     <div className="h-full flex">
       <FilterSidebar />
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2.5">
+        <header className="glass-subtle flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2.5">
           <div className="flex items-center gap-3">
             <h1 className="text-base font-semibold tracking-tight">{heading}</h1>
             <div className="flex items-center gap-1 text-[var(--color-fg-muted)]">

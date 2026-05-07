@@ -347,7 +347,7 @@ export function WeekGrid({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      <div className="grid grid-cols-[var(--cols)] border-b border-[var(--color-border)] bg-[var(--color-bg-elev)]">
+      <div className="glass-subtle grid grid-cols-[var(--cols)] border-b border-[var(--color-border)]">
         <div />
         {dayDates.map((d, i) => {
           const isToday = isSameDay(d, today);
@@ -376,7 +376,7 @@ export function WeekGrid({
       </div>
 
       {allDay.length > 0 && (
-        <div className="grid grid-cols-[var(--cols)] border-b border-[var(--color-border)] bg-[var(--color-bg-elev)]">
+        <div className="glass-subtle grid grid-cols-[var(--cols)] border-b border-[var(--color-border)]">
           <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)] flex items-center">
             All-day
           </div>
@@ -409,8 +409,8 @@ export function WeekGrid({
                           isInstance: Boolean(det.isInstance),
                         });
                       }}
-                      className="block w-full text-left text-[11px] rounded px-2 py-0.5 truncate text-white pr-5"
-                      style={{ backgroundColor: it.color }}
+                      className="event-tile block w-full text-left text-[11px] rounded-md px-2 py-0.5 truncate text-white pr-5"
+                      style={{ backgroundColor: muteColor(it.color) }}
                       title={it.title}
                     >
                       {it.title}
@@ -527,7 +527,7 @@ export function WeekGrid({
                           if (!drag) openEdit(b);
                         }}
                         className={cn(
-                          "absolute rounded-md text-[11px] leading-tight px-1.5 py-1 overflow-hidden text-white shadow-sm border border-white/20 group/event",
+                          "event-tile absolute rounded-lg text-[11px] leading-tight px-1.5 py-1 overflow-hidden text-white group/event",
                           writable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
                           (isMoving || isResizing) && "opacity-80 ring-2 ring-white/60 z-20",
                         )}
@@ -536,7 +536,7 @@ export function WeekGrid({
                           height,
                           left: `calc(${leftPct}% + 2px)`,
                           width: `calc(${widthPct}% - 4px)`,
-                          backgroundColor: b.color,
+                          backgroundColor: muteColor(b.color),
                         }}
                         title={`${b.title}\n${formatTimeRange(b.start, b.end)}\n${b.calendarName}`}
                       >
@@ -577,6 +577,18 @@ export function WeekGrid({
       <EventDialog mode={dialog} onClose={() => setDialog(null)} calendars={calendars} />
     </div>
   );
+}
+
+// Convert a hex color (#rrggbb) to a muted rgba so the calendar tint shows
+// through the glass overlay rather than dominating it. Alpha tuned for
+// readability against a dark glass surface.
+function muteColor(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return "rgba(120, 120, 130, 0.55)";
+  const r = parseInt(m[1].slice(0, 2), 16);
+  const g = parseInt(m[1].slice(2, 4), 16);
+  const b = parseInt(m[1].slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, 0.55)`;
 }
 
 function addDay(d: Date, n: number): Date {

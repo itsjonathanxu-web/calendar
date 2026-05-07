@@ -41,7 +41,7 @@ export async function FilterSidebar() {
   }
 
   return (
-    <aside className="w-56 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-elev)] overflow-y-auto">
+    <aside className="glass-subtle w-56 shrink-0 border-r border-[var(--color-border)] overflow-y-auto">
       <div className="px-4 py-3 border-b border-[var(--color-border)]">
         <div className="text-xs uppercase tracking-wider text-[var(--color-fg-muted)]">
           Calendars
