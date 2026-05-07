@@ -176,8 +176,8 @@ export default async function CalendarPage({
       <FilterSidebar />
       <div className="flex-1 min-w-0 flex flex-col">
         <header className="glass-subtle flex flex-wrap items-center justify-between gap-y-2 border-b border-[var(--color-border)] pl-4 lg:pl-4 pr-3 py-2.5">
-          {/* Pad the left side so the mobile hamburger (top-2 left-2) doesn't sit over the heading */}
-          <div className="flex items-center gap-2 lg:gap-3 min-w-0 ml-20 lg:ml-0">
+          {/* Pad the left side so the floating hamburger (top-2 left-2) doesn't sit over the heading */}
+          <div className="flex items-center gap-2 lg:gap-3 min-w-0 ml-24">
             <h1 className="text-sm sm:text-base font-semibold tracking-tight truncate">{heading}</h1>
             <div className="flex items-center gap-1 text-[var(--color-fg-muted)] shrink-0">
               <Link

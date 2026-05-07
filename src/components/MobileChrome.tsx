@@ -32,7 +32,7 @@ export function MobileTopBar({ showFilter = true }: { showFilter?: boolean }) {
 
   return (
     <>
-      <div className="mobile-only fixed top-2 left-2 z-[70] flex items-center gap-1.5">
+      <div className="fixed top-2 left-2 z-[70] flex items-center gap-1.5">
         <button
           onClick={() => setOpen(open === "nav" ? null : "nav")}
           aria-label={open === "nav" ? "Close menu" : "Open menu"}

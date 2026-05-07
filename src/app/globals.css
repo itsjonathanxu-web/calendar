@@ -77,48 +77,46 @@ body.chat-open {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.04));
 }
 
-/* ─── Mobile drawer behavior ───────────────────────────────────────────────
-   On screens narrower than the lg breakpoint (1024px), the left nav and the
-   calendar filter sidebar slide off-screen by default and re-emerge when a
-   body class flips. Two separate flags so the user can have nav OR filter
-   open independently (one wins; the other closes via the same backdrop).
+/* ─── Sidebar drawer behavior ──────────────────────────────────────────────
+   The left nav and the calendar filter both slide off-screen by default and
+   re-emerge when a body class flips, on every viewport. The calendar fills
+   the screen; sidebars overlay it. Two separate flags so the user can have
+   nav OR filter open independently (one wins; the other closes via the
+   shared backdrop).
 */
-@media (max-width: 1023px) {
-  .app-sidebar,
-  .filter-sidebar {
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 60;
-    width: 16rem;
-    transform: translateX(-105%);
-    transition: transform 0.22s ease-out;
-    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.5);
-  }
-  body.nav-open .app-sidebar,
-  body.filters-open .filter-sidebar {
-    transform: translateX(0);
-  }
-  .mobile-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(2px);
-    z-index: 55;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.18s;
-  }
-  body.nav-open .mobile-backdrop,
-  body.filters-open .mobile-backdrop {
-    opacity: 1;
-    pointer-events: auto;
-  }
+.app-sidebar,
+.filter-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 60;
+  width: 16rem;
+  transform: translateX(-105%);
+  transition: transform 0.22s ease-out;
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.5);
 }
-/* The backdrop never appears on desktop; nav and filter sit inline. */
+body.nav-open .app-sidebar,
+body.filters-open .filter-sidebar {
+  transform: translateX(0);
+}
+.mobile-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 55;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s;
+}
+body.nav-open .mobile-backdrop,
+body.filters-open .mobile-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 @media (min-width: 1024px) {
-  .mobile-backdrop,
   .mobile-only {
     display: none !important;
   }
