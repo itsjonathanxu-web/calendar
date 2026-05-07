@@ -1,0 +1,128 @@
+// Unified Calendar — data model
+// See plan: /Users/jonathanxu/.claude/plans/i-want-to-build-deep-volcano.md
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  // Both providers are supported. DATABASE_URL determines which is actually used at runtime.
+  // Local dev: file:./dev.db (SQLite). Production (Vercel): postgres://... (Neon).
+  provider = "postgresql"
+}
+
+// One connected source: Google, Notion, or Apple iCloud (CalDAV)
+model Account {
+  id          String    @id @default(cuid())
+  source      String    // "google" | "notion" | "apple"
+  label       String    // user-facing name, e.g. "personal@gmail.com"
+  credentials String    // JSON, encrypted at rest with @noble/ciphers
+  lastSyncAt  DateTime?
+  createdAt   DateTime  @default(now())
+  calendars   Calendar[]
+
+  @@unique([source, label])
+}
+
+// A calendar within an account: "Personal", "Work", a Notion DB, etc.
+model Calendar {
+  id        String  @id @default(cuid())
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  sourceId  String  // remote id (Google calendarId, Notion DB id, CalDAV path)
+  name      String
+  color     String  // hex
+  enabled   Boolean @default(true) // filter toggle
+  isDefault Boolean @default(false) // where AI-scheduled events land
+  config    String? // JSON: per-source config (e.g., Notion {dateProperty, titleProperty})
+  events    Event[]
+
+  @@unique([accountId, sourceId])
+}
+
+// A point/range on the calendar. May be an event, a Notion task with a date, or a deadline.
+model Event {
+  id         String   @id @default(cuid())
+  calendarId String
+  calendar   Calendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+  sourceId   String   // remote id within the calendar
+  title      String
+  start      DateTime
+  end        DateTime
+  allDay     Boolean  @default(false)
+  notes      String?
+  kind       String   @default("event") // "event" | "task" | "deadline"
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  updatedAt  DateTime @updatedAt
+  // raw payload from source for debugging / round-tripping
+  raw        String?  // JSON
+
+  @@unique([calendarId, sourceId])
+  @@index([start, end])
+}
+
+// Long-term project. Often backed by a Notion page; has a due date.
+model Project {
+  id           String   @id @default(cuid())
+  name         String
+  dueDate      DateTime?
+  notionPageId String?  @unique
+  color        String   @default("#7c7c7c")
+  notes        String?
+  createdAt    DateTime @default(now())
+  events       Event[]
+  tasks        Task[]
+}
+
+// A unit of work, often pulled from a Notion task DB. May have a scheduled time.
+model Task {
+  id              String   @id @default(cuid())
+  projectId       String?
+  project         Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title           String
+  dueDate         DateTime?
+  scheduledStart  DateTime?
+  scheduledEnd    DateTime?
+  estimateMinutes Int?
+  notionPageId    String?  @unique
+  done            Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([dueDate])
+}
+
+// Scheduling guidance Claude reads on every call: "no meetings before 10am", etc.
+model Rule {
+  id        String   @id @default(cuid())
+  text      String
+  priority  Int      @default(0) // higher = applied first when conflicts arise
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Conversation memory for the slot-it-in chat.
+model ChatMessage {
+  id        String   @id @default(cuid())
+  role      String   // "user" | "assistant" | "tool"
+  content   String   // text content
+  toolCalls String?  // JSON of tool_use blocks if assistant
+  toolUseId String?  // when role = "tool", the tool_use_id this responds to
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// Working hours and other singleton config. Single row keyed by id="settings".
+model Settings {
+  id                String  @id @default("settings")
+  workdayStart      String  @default("09:00") // HH:mm
+  workdayEnd        String  @default("18:00")
+  timezone          String  @default("America/Toronto")
+  defaultCalendarId String?
+  passwordHash      String? // bcrypt-style hash for the local login shell
+  encryptionKeySalt String? // for credential encryption
+}
