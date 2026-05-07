@@ -6,7 +6,7 @@
 # Single Fly volume mounted at /app/data holds both the SQLite database and
 # the CLI's OAuth credentials (HOME is set to /app/data, so ~/.claude lives there).
 
-ARG NODE_VERSION=20.18.0
+ARG NODE_VERSION=22
 
 # ─── deps stage ───────────────────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS deps
