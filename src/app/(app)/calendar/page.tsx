@@ -36,14 +36,65 @@ export default async function CalendarPage({
   const anchor = parseAnchor(w);
   const { start, end } = rangeForView(view, anchor);
 
-  const events = await db.event.findMany({
+  // Pull non-recurring events that overlap the window AND any recurring masters
+  // (their start may be earlier than the window — we expand them below).
+  const nonRecurring = await db.event.findMany({
     where: {
       AND: [{ start: { lt: end } }, { end: { gt: start } }],
+      rrule: null,
+      recurrenceParentId: null,
       calendar: { enabled: true },
     },
     include: { calendar: { include: { account: true } } },
     orderBy: { start: "asc" },
   });
+
+  const masters = await db.event.findMany({
+    where: {
+      rrule: { not: null },
+      recurrenceParentId: null,
+      calendar: { enabled: true },
+    },
+    include: { calendar: { include: { account: true } } },
+  });
+
+  const overrides = await db.event.findMany({
+    where: {
+      AND: [{ start: { lt: end } }, { end: { gt: start } }],
+      recurrenceParentId: { not: null },
+      calendar: { enabled: true },
+    },
+    include: { calendar: { include: { account: true } } },
+  });
+
+  // Expand each master into instances within the window, skipping dates that have an override.
+  const { expandRRule, instanceId } = await import("@/lib/calendar/recurrence");
+  type EventLike = (typeof nonRecurring)[number];
+  const overrideKeys = new Set(
+    overrides.map((o) => `${o.recurrenceParentId}::${o.start.toISOString()}`),
+  );
+  const expandedInstances: EventLike[] = [];
+  for (const master of masters) {
+    if (!master.rrule) continue;
+    const dur = master.end.getTime() - master.start.getTime();
+    const occurrences = expandRRule(master.start, master.rrule, start, end);
+    for (const occ of occurrences) {
+      if (overrideKeys.has(`${master.id}::${occ.toISOString()}`)) continue;
+      // Synthesize an EventLike row keeping the master's metadata but with the new start/end + virtual id
+      expandedInstances.push({
+        ...master,
+        id: instanceId(master.id, occ),
+        start: occ,
+        end: new Date(occ.getTime() + dur),
+        rrule: null,
+        recurrenceParentId: master.id,
+      } as EventLike);
+    }
+  }
+
+  const events = [...nonRecurring, ...overrides, ...expandedInstances].sort(
+    (a, b) => a.start.getTime() - b.start.getTime(),
+  );
 
   const writableCalendars = await db.calendar.findMany({
     where: { account: { source: { in: ["google", "notion-mcp"] } } },
@@ -61,7 +112,16 @@ export default async function CalendarPage({
 
   const detailsById: Record<
     string,
-    { id: string; title: string; notes: string | null; calendarId: string; source: string; allDay: boolean }
+    {
+      id: string;
+      title: string;
+      notes: string | null;
+      calendarId: string;
+      source: string;
+      allDay: boolean;
+      rrule: string | null;
+      isInstance: boolean;
+    }
   > = {};
   for (const ev of events) {
     detailsById[ev.id] = {
@@ -71,18 +131,23 @@ export default async function CalendarPage({
       calendarId: ev.calendarId,
       source: ev.calendar.account.source,
       allDay: ev.allDay,
+      rrule: ev.rrule,
+      // synthetic id includes "::"
+      isInstance: ev.id.includes("::"),
     };
   }
 
-  const blocks: Block[] = events.map((e) => ({
-    id: e.id,
-    title: e.title,
-    color: e.calendar.color,
-    calendarName: e.calendar.name,
-    start: e.start,
-    end: e.end,
-    allDay: e.allDay,
-  }));
+  const blocks: Block[] = events
+    .filter((e) => e.kind !== "skipped") // hide skipped recurrence overrides
+    .map((e) => ({
+      id: e.id,
+      title: e.title,
+      color: e.calendar.color,
+      calendarName: e.calendar.name,
+      start: e.start,
+      end: e.end,
+      allDay: e.allDay,
+    }));
 
   const accountCount = await db.account.count();
   const projects = await db.project.findMany({
@@ -230,7 +295,16 @@ function TimeGridView({
   calendars: { id: string; name: string; color: string; source: string; accountLabel: string }[];
   detailsById: Record<
     string,
-    { id: string; title: string; notes: string | null; calendarId: string; source: string; allDay: boolean }
+    {
+      id: string;
+      title: string;
+      notes: string | null;
+      calendarId: string;
+      source: string;
+      allDay: boolean;
+      rrule: string | null;
+      isInstance: boolean;
+    }
   >;
 }) {
   const days =

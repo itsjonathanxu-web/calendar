@@ -17,6 +17,8 @@ type EventDetails = {
   calendarId: string;
   source: string;
   allDay: boolean;
+  rrule?: string | null;
+  isInstance?: boolean;
 };
 
 export function MonthGrid({
@@ -93,6 +95,8 @@ export function MonthGrid({
       notes: det.notes,
       calendarId: det.calendarId,
       source: det.source,
+      rrule: det.rrule ?? null,
+      isInstance: Boolean(det.isInstance),
     });
   }
 

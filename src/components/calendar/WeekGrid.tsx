@@ -23,6 +23,8 @@ type EventDetails = {
   calendarId: string;
   source: string;
   allDay: boolean;
+  rrule?: string | null;
+  isInstance?: boolean;
 };
 
 type DragState =
@@ -126,6 +128,8 @@ export function WeekGrid({
       notes: det.notes,
       calendarId: det.calendarId,
       source: det.source,
+      rrule: det.rrule ?? null,
+      isInstance: Boolean(det.isInstance),
     });
   }
 
@@ -362,6 +366,8 @@ export function WeekGrid({
                           notes: det.notes,
                           calendarId: det.calendarId,
                           source: det.source,
+                          rrule: det.rrule ?? null,
+                          isInstance: Boolean(det.isInstance),
                         });
                       }}
                       className="block w-full text-left text-[11px] rounded px-2 py-0.5 truncate text-white pr-5"

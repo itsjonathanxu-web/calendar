@@ -26,8 +26,45 @@ export type DialogMode =
       notes: string | null;
       calendarId: string;
       source: string;
+      rrule?: string | null;
+      isInstance?: boolean; // is this a synthetic recurring instance?
     }
   | null;
+
+type RepeatPreset = "none" | "daily" | "weekly" | "monthly" | "yearly";
+
+function presetToRRule(preset: RepeatPreset, until: string | null): string | null {
+  if (preset === "none") return null;
+  const map: Record<Exclude<RepeatPreset, "none">, string> = {
+    daily: "FREQ=DAILY",
+    weekly: "FREQ=WEEKLY",
+    monthly: "FREQ=MONTHLY",
+    yearly: "FREQ=YEARLY",
+  };
+  let rule = map[preset];
+  if (until) {
+    const d = new Date(until + "T23:59:59");
+    rule += `;UNTIL=${d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")}`;
+  }
+  return rule;
+}
+
+function rruleToPreset(rrule: string | null | undefined): RepeatPreset {
+  if (!rrule) return "none";
+  if (rrule.includes("FREQ=DAILY")) return "daily";
+  if (rrule.includes("FREQ=WEEKLY")) return "weekly";
+  if (rrule.includes("FREQ=MONTHLY")) return "monthly";
+  if (rrule.includes("FREQ=YEARLY")) return "yearly";
+  return "none";
+}
+
+function rruleUntil(rrule: string | null | undefined): string {
+  if (!rrule) return "";
+  const m = rrule.match(/UNTIL=(\d{8})T?(\d{6})?/);
+  if (!m) return "";
+  const y = m[1].slice(0, 4), mo = m[1].slice(4, 6), d = m[1].slice(6, 8);
+  return `${y}-${mo}-${d}`;
+}
 
 export function EventDialog({
   mode,
@@ -48,6 +85,9 @@ export function EventDialog({
   const [endStr, setEndStr] = useState("");
   const [allDay, setAllDay] = useState(false);
   const [notes, setNotes] = useState("");
+  const [repeat, setRepeat] = useState<RepeatPreset>("none");
+  const [until, setUntil] = useState<string>("");
+  const [editScope, setEditScope] = useState<"all" | "this" | "future">("all");
 
   useEffect(() => {
     if (!mode) return;
@@ -59,6 +99,9 @@ export function EventDialog({
       setEndStr(toLocalInput(mode.end));
       setAllDay(false);
       setNotes("");
+      setRepeat("none");
+      setUntil("");
+      setEditScope("all");
     } else {
       setTitle(mode.title);
       setCalendarId(mode.calendarId);
@@ -66,6 +109,10 @@ export function EventDialog({
       setEndStr(toLocalInput(mode.end));
       setAllDay(mode.allDay);
       setNotes(mode.notes ?? "");
+      setRepeat(rruleToPreset(mode.rrule));
+      setUntil(rruleUntil(mode.rrule));
+      // For an instance click, default to "this only"; for a master click default to "all"
+      setEditScope(mode.isInstance ? "this" : "all");
     }
   }, [mode, calendars]);
 
@@ -82,6 +129,7 @@ export function EventDialog({
     try {
       const start = new Date(startStr);
       const end = new Date(endStr);
+      const rrule = presetToRRule(repeat, until || null);
       if (mode.kind === "create") {
         const res = await fetch("/api/events/create", {
           method: "POST",
@@ -93,6 +141,7 @@ export function EventDialog({
             end: end.toISOString(),
             allDay,
             notes: notes || null,
+            rrule,
           }),
         });
         if (!res.ok) throw new Error((await res.json()).error ?? "create failed");
@@ -107,6 +156,8 @@ export function EventDialog({
             end: end.toISOString(),
             allDay,
             notes: notes || null,
+            rrule,
+            scope: editScope,
           }),
         });
         if (!res.ok) throw new Error((await res.json()).error ?? "update failed");
@@ -122,13 +173,26 @@ export function EventDialog({
 
   async function remove() {
     if (mode?.kind !== "edit") return;
-    if (!confirm("Delete this event?")) return;
+    const isRecurring = Boolean(mode.rrule || mode.isInstance);
+    let scope: "all" | "this" | "future" = "all";
+    if (isRecurring) {
+      const ans = prompt(
+        "This event repeats. Type 'this' (this one only), 'future' (this and future), or 'all' (every occurrence):",
+        "this",
+      );
+      if (!ans) return;
+      const v = ans.trim().toLowerCase();
+      if (v !== "this" && v !== "future" && v !== "all") return;
+      scope = v;
+    } else {
+      if (!confirm("Delete this event?")) return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/events/delete", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: mode.eventId }),
+        body: JSON.stringify({ id: mode.eventId, scope }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "delete failed");
       onClose();
@@ -215,6 +279,66 @@ export function EventDialog({
                 )}
               </select>
             </label>
+          )}
+
+          {/* Repeat picker */}
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-xs text-[var(--color-fg-muted)]">
+              Repeat
+              <select
+                value={repeat}
+                onChange={(e) => setRepeat(e.target.value as RepeatPreset)}
+                disabled={!editable || (mode.kind === "edit" && mode.isInstance && editScope !== "all")}
+                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
+              >
+                <option value="none">Doesn&apos;t repeat</option>
+                <option value="daily">Every day</option>
+                <option value="weekly">Every week</option>
+                <option value="monthly">Every month</option>
+                <option value="yearly">Every year</option>
+              </select>
+            </label>
+            {repeat !== "none" && (
+              <label className="block text-xs text-[var(--color-fg-muted)]">
+                Until (optional)
+                <input
+                  type="date"
+                  value={until}
+                  onChange={(e) => setUntil(e.target.value)}
+                  disabled={!editable}
+                  className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
+                />
+              </label>
+            )}
+          </div>
+
+          {/* Edit scope (only when editing a recurring event/instance) */}
+          {mode.kind === "edit" && (mode.rrule || mode.isInstance) && (
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+              <div className="text-xs text-[var(--color-fg-muted)] mb-1.5">
+                Apply changes to
+              </div>
+              <div className="flex flex-col gap-1.5 text-sm">
+                {(["this", "future", "all"] as const).map((opt) => (
+                  <label key={opt} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="editScope"
+                      value={opt}
+                      checked={editScope === opt}
+                      onChange={() => setEditScope(opt)}
+                    />
+                    <span>
+                      {opt === "this"
+                        ? "This event only"
+                        : opt === "future"
+                          ? "This and following events"
+                          : "All events in the series"}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
           )}
 
           <textarea
