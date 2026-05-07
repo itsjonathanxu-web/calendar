@@ -439,7 +439,7 @@ export function MonthGrid({
       </div>
 
       {/* Mobile-only: Apple-style day detail list under the grid */}
-      <div className="lg:hidden flex-1 min-h-0 overflow-y-auto mobile-card-shell">
+      <div className="mobile-only flex flex-col flex-1 min-h-0 overflow-y-auto glass rounded-3xl">
         <DayDetailList
           day={selectedDay}
           items={blocksForDay(selectedDay)}

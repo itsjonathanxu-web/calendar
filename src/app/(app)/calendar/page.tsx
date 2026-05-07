@@ -256,7 +256,7 @@ export default async function CalendarPage({
           </div>
         ) : view === "week" ? (
           <>
-            <div className="hidden lg:flex flex-col flex-1 min-h-0">
+            <div className="desktop-only flex flex-col flex-1 min-h-0">
               <WeekGrid
                 anchor={isoDate(anchor)}
                 blocks={blocks.map((b) => ({
@@ -268,7 +268,7 @@ export default async function CalendarPage({
                 detailsById={detailsById}
               />
             </div>
-            <div className="lg:hidden flex flex-col flex-1 min-h-0">
+            <div className="mobile-only flex flex-col flex-1 min-h-0">
               <MobileWeekList
                 anchor={isoDate(anchor)}
                 blocks={blocks.map((b) => ({
