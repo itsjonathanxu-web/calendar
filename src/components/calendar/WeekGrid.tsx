@@ -447,9 +447,18 @@ export function WeekGrid({
             All-day
           </div>
           {dayDates.map((d, i) => {
-            const items = allDay.filter(
-              (b) => b.start <= addDay(d, 1) && b.end > d,
-            );
+            // Compare by UTC calendar-date string. `b.start` for an all-day
+            // event is stored at UTC midnight (e.g. Fri 00:00Z); in EDT that
+            // reads as Thu 8pm, which would falsely include the event on
+            // Thursday too. Using the YYYY-MM-DD slice anchors to the date
+            // the event was tagged with, regardless of viewer timezone.
+            const cellKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            const items = allDay.filter((b) => {
+              const startKey = b.start.toISOString().slice(0, 10);
+              const endKey = b.end.toISOString().slice(0, 10);
+              if (startKey === endKey) return startKey === cellKey;
+              return startKey <= cellKey && endKey > cellKey;
+            });
             return (
               <div
                 key={i}

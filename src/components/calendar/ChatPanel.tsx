@@ -252,7 +252,12 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
             {m.proposals.length > 0 && (
               <div className="mt-2 space-y-2">
                 {m.proposals.map((p, i) => (
-                  <ProposalCard key={i} p={p} onConfirm={() => confirmProposal(p)} />
+                  <ProposalCard
+                    key={`${m.id}-${i}`}
+                    storageKey={`proposal-confirmed:${m.id}:${i}`}
+                    p={p}
+                    onConfirm={() => confirmProposal(p)}
+                  />
                 ))}
               </div>
             )}
@@ -293,8 +298,33 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-function ProposalCard({ p, onConfirm }: { p: Proposal; onConfirm: () => Promise<void> }) {
-  const [done, setDone] = useState(false);
+function ProposalCard({
+  p,
+  onConfirm,
+  storageKey,
+}: {
+  p: Proposal;
+  onConfirm: () => Promise<void>;
+  storageKey: string;
+}) {
+  // Persist the "confirmed" state across panel reopens / history refetches
+  // so the user can't accidentally confirm the same proposal twice.
+  const [done, setDone] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(storageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  function markDone() {
+    setDone(true);
+    try {
+      window.localStorage.setItem(storageKey, "1");
+    } catch {
+      // ignore quota / unavailable
+    }
+  }
   const [error, setError] = useState<string | null>(null);
   const isDelete = p.type === "propose_delete";
   const start = isDelete
@@ -354,7 +384,7 @@ function ProposalCard({ p, onConfirm }: { p: Proposal; onConfirm: () => Promise<
               setError(null);
               try {
                 await onConfirm();
-                setDone(true);
+                markDone();
               } catch (err) {
                 setError(err instanceof Error ? err.message : String(err));
               }
