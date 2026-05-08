@@ -44,6 +44,16 @@ export default async function CalendarPage({
   const taskMode = tm === "1";
   const { start, end } = rangeForView(view, anchor);
 
+  // Resolve dayOnly calendar IDs separately and exclude by id. The previous
+  // `NOT: { calendar: { config: { contains: "dayOnly" } } }` filter also
+  // excluded rows where calendar.config IS NULL (SQL NULL LIKE '%x%' is NULL,
+  // and NOT NULL is NULL → row excluded), which hid every synced calendar.
+  const dayOnlyCalRows = await db.calendar.findMany({
+    where: { config: { contains: "dayOnly" } },
+    select: { id: true },
+  });
+  const dayOnlyCalIds = dayOnlyCalRows.map((c) => c.id);
+
   // Pull non-recurring events that overlap the window AND any recurring masters
   // (their start may be earlier than the window — we expand them below).
   const nonRecurring = await db.event.findMany({
@@ -51,8 +61,7 @@ export default async function CalendarPage({
       AND: [{ start: { lt: end } }, { end: { gt: start } }],
       rrule: null,
       recurrenceParentId: null,
-      // Hide the "Just for today" notes from week/month grids.
-      NOT: { calendar: { config: { contains: "dayOnly" } } },
+      calendarId: { notIn: dayOnlyCalIds },
     },
     include: { calendar: { include: { account: true } } },
     orderBy: { start: "asc" },
@@ -62,7 +71,7 @@ export default async function CalendarPage({
     where: {
       rrule: { not: null },
       recurrenceParentId: null,
-      NOT: { calendar: { config: { contains: "dayOnly" } } },
+      calendarId: { notIn: dayOnlyCalIds },
     },
     include: { calendar: { include: { account: true } } },
   });
@@ -71,7 +80,7 @@ export default async function CalendarPage({
     where: {
       AND: [{ start: { lt: end } }, { end: { gt: start } }],
       recurrenceParentId: { not: null },
-      NOT: { calendar: { config: { contains: "dayOnly" } } },
+      calendarId: { notIn: dayOnlyCalIds },
     },
     include: { calendar: { include: { account: true } } },
   });
