@@ -77,6 +77,17 @@ function splitByDay(block: Block, days: Date[]): Omit<LaidOutBlock, "lane" | "la
     const segEnd = block.end < dayEnd ? block.end : dayEnd;
     const topMin = (segStart.getTime() - dayStart.getTime()) / 60_000;
     const durationMin = Math.max(15, (segEnd.getTime() - segStart.getTime()) / 60_000);
+    if (typeof window !== "undefined" && (topMin < 0 || topMin > 1440)) {
+      // eslint-disable-next-line no-console
+      console.warn("[layoutWeek] suspicious topMin", {
+        title: block.title,
+        topMin,
+        dayIndex: i,
+        blockStart: block.start.toISOString(),
+        dayStart: dayStart.toISOString(),
+        blockStartLocal: block.start.toString(),
+      });
+    }
     out.push({ ...block, dayIndex: i, topMin, durationMin });
   }
   return out;

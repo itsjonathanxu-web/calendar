@@ -327,10 +327,21 @@ export function MonthGrid({
                       const taskTile = taskMode && isTask(b.id);
                       const completed = isCompleted(b.id);
                       const writable = isWritable(b.id);
+                      // The wrapper itself is the drag handle AND the click
+                      // surface. Earlier we had a nested <button> for the
+                      // title — buttons are not HTML5-draggable by default,
+                      // so mousedowning on the title never started a drag.
                       return (
                         <div
                           key={b.id + cellKey}
-                          className="relative group/m-event"
+                          className={cn(
+                            "event-tile relative group/m-event flex items-center gap-1 w-full text-left text-[10px] leading-snug rounded-md px-1.5 py-0.5 text-white",
+                            writable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+                            completed && "opacity-60",
+                            writable && !taskTile && "pr-4",
+                          )}
+                          style={{ backgroundColor: muteColor(b.color) }}
+                          title={`${b.title}\n${format(new Date(b.start), "p")} – ${format(new Date(b.end), "p")}`}
                           draggable={writable}
                           onDragStart={(e) => {
                             if (!writable) return;
@@ -342,58 +353,52 @@ export function MonthGrid({
                             draggingId.current = null;
                             setHoverDayKey(null);
                           }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // ignore clicks that happened mid-drag
+                            if (draggingId.current === b.id) return;
+                            openEdit(b);
+                          }}
                         >
-                          <div
-                            className={cn(
-                              "event-tile flex items-center gap-1 w-full text-left text-[10px] leading-snug rounded-md px-1.5 py-0.5 text-white",
-                              writable && "cursor-grab active:cursor-grabbing",
-                              completed && "opacity-60",
-                              writable && !taskTile && "pr-4",
-                            )}
-                            style={{ backgroundColor: muteColor(b.color) }}
-                            title={`${b.title}\n${format(new Date(b.start), "p")} – ${format(new Date(b.end), "p")}`}
-                          >
-                            {taskTile && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleComplete(b.id);
-                                }}
-                                aria-label={completed ? "Uncheck" : "Mark complete"}
-                                className="shrink-0 w-3 h-3 rounded-sm border border-white/50 flex items-center justify-center bg-black/20 hover:bg-black/40"
-                              >
-                                {completed && (
-                                  <span className="text-[9px] leading-none">✓</span>
-                                )}
-                              </button>
-                            )}
-                            <button
+                          {taskTile && (
+                            <span
+                              role="checkbox"
+                              tabIndex={0}
+                              aria-checked={completed}
+                              aria-label={completed ? "Uncheck" : "Mark complete"}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                openEdit(b);
+                                toggleComplete(b.id);
                               }}
-                              className={cn(
-                                "flex-1 min-w-0 text-left truncate hover:opacity-90",
-                                completed && "line-through",
-                              )}
+                              className="shrink-0 w-3 h-3 rounded-sm border border-white/50 flex items-center justify-center bg-black/20 hover:bg-black/40"
                             >
-                              {b.allDay
-                                ? b.title
-                                : `${format(new Date(b.start), "h:mma").toLowerCase()} ${b.title}`}
-                            </button>
-                          </div>
-                          {isWritable(b.id) && !taskTile && (
-                            <button
+                              {completed && <span className="text-[9px] leading-none">✓</span>}
+                            </span>
+                          )}
+                          <span
+                            className={cn(
+                              "flex-1 min-w-0 truncate",
+                              completed && "line-through",
+                            )}
+                          >
+                            {b.allDay
+                              ? b.title
+                              : `${format(new Date(b.start), "h:mma").toLowerCase()} ${b.title}`}
+                          </span>
+                          {writable && !taskTile && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label="Delete event"
+                              title="Delete"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 quickDelete(b.id);
                               }}
                               className="absolute right-0.5 top-0 bottom-0 my-auto h-3.5 w-3.5 opacity-0 group-hover/m-event:opacity-100 rounded text-white/90 hover:text-white hover:bg-black/30 flex items-center justify-center"
-                              aria-label="Delete event"
-                              title="Delete"
                             >
                               <X size={9} />
-                            </button>
+                            </span>
                           )}
                         </div>
                       );
