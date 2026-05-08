@@ -294,120 +294,138 @@ export function MonthGrid({
                     if (id) moveTaskToDay(id, d);
                   }}
                   className={cn(
-                    "flex flex-col items-center pt-2 px-1 relative group cursor-pointer transition-colors",
+                    "flex flex-col items-center lg:items-stretch pt-2 px-1 relative group cursor-pointer transition-colors",
                     !inMonth && "opacity-30",
                     isHoverTarget && "bg-white/[0.06]",
                   )}
                 >
-                  <div
-                    className={cn(
-                      "inline-flex items-center justify-center font-light",
-                      "text-base lg:text-2xl",
-                      isToday
-                        ? "w-7 h-7 lg:w-10 lg:h-10 rounded-full bg-white text-black font-medium"
-                        : isSelected
-                          ? "w-7 h-7 lg:w-10 lg:h-10 rounded-full border border-white/40 text-white"
-                          : "text-white",
-                    )}
-                  >
-                    {format(d, "d")}
+                  <div className="flex justify-center lg:justify-center">
+                    <div
+                      className={cn(
+                        "inline-flex items-center justify-center font-light",
+                        "text-base lg:text-sm lg:font-medium",
+                        isToday
+                          ? "w-7 h-7 lg:w-6 lg:h-6 rounded-full bg-white text-black font-medium"
+                          : isSelected
+                            ? "w-7 h-7 lg:w-6 lg:h-6 rounded-full border border-white/40 text-white lg:border-0"
+                            : "text-white",
+                      )}
+                    >
+                      {format(d, "d")}
+                    </div>
                   </div>
 
-                  {/* Default: single white dot if has events. TaskMode: small
-                      tiles for drag-to-day workflow. */}
-                  {!taskMode && (
-                    <div className="h-1.5 mt-1 flex items-center justify-center">
-                      {items.length > 0 && (
-                        <span className="w-1 h-1 rounded-full bg-white/80" />
-                      )}
-                    </div>
-                  )}
+                  {/* Mobile: single white dot below number when day has events. */}
+                  <div className="lg:hidden h-1.5 mt-1 flex items-center justify-center">
+                    {items.length > 0 && (
+                      <span className="w-1 h-1 rounded-full bg-white/80" />
+                    )}
+                  </div>
 
-                  {taskMode && (
-                    <div className="hidden lg:block w-full mt-1.5 space-y-0.5">
-                      {visible.map((b) => {
-                        const taskTile = isTask(b.id);
-                        const completed = isCompleted(b.id);
-                        return (
+                  {/* Desktop: actual event tiles in the cell. */}
+                  <div className="hidden lg:block w-full mt-1.5 px-1 space-y-0.5">
+                    {visible.map((b) => {
+                      const taskTile = taskMode && isTask(b.id);
+                      const completed = isCompleted(b.id);
+                      return (
+                        <div
+                          key={b.id + cellKey}
+                          className="relative group/m-event"
+                          draggable={taskTile}
+                          onDragStart={(e) => {
+                            if (!taskTile) return;
+                            e.dataTransfer.setData("text/plain", b.id);
+                            e.dataTransfer.effectAllowed = "move";
+                            draggingId.current = b.id;
+                          }}
+                          onDragEnd={() => {
+                            draggingId.current = null;
+                            setHoverDayKey(null);
+                          }}
+                        >
                           <div
-                            key={b.id + cellKey}
-                            className="relative group/m-event"
-                            draggable={taskTile}
-                            onDragStart={(e) => {
-                              if (!taskTile) return;
-                              e.dataTransfer.setData("text/plain", b.id);
-                              e.dataTransfer.effectAllowed = "move";
-                              draggingId.current = b.id;
-                            }}
-                            onDragEnd={() => {
-                              draggingId.current = null;
-                              setHoverDayKey(null);
-                            }}
+                            className={cn(
+                              "event-tile flex items-center gap-1 w-full text-left text-[10px] leading-snug rounded-md px-1.5 py-0.5 text-white",
+                              taskTile && "cursor-grab active:cursor-grabbing",
+                              completed && "opacity-60",
+                              isWritable(b.id) && !taskTile && "pr-4",
+                            )}
+                            style={{ backgroundColor: muteColor(b.color) }}
+                            title={`${b.title}\n${format(new Date(b.start), "p")} – ${format(new Date(b.end), "p")}`}
                           >
-                            <div
-                              className={cn(
-                                "event-tile flex items-center gap-1 w-full text-left text-[10px] leading-snug rounded-md px-1.5 py-0.5 text-white pr-4",
-                                taskTile && "cursor-grab active:cursor-grabbing",
-                                completed && "opacity-60",
-                              )}
-                              style={{ backgroundColor: muteColor(b.color) }}
-                              title={`${b.title}\n${format(new Date(b.start), "p")}`}
-                            >
-                              {taskTile && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleComplete(b.id);
-                                  }}
-                                  aria-label={completed ? "Uncheck" : "Mark complete"}
-                                  className="shrink-0 w-3 h-3 rounded-sm border border-white/50 flex items-center justify-center bg-black/20 hover:bg-black/40"
-                                >
-                                  {completed && (
-                                    <span className="text-[9px] leading-none">✓</span>
-                                  )}
-                                </button>
-                              )}
+                            {taskTile && (
                               <button
-                                onClick={() => openEdit(b)}
-                                className={cn(
-                                  "flex-1 min-w-0 text-left truncate hover:opacity-90",
-                                  completed && "line-through",
-                                )}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleComplete(b.id);
+                                }}
+                                aria-label={completed ? "Uncheck" : "Mark complete"}
+                                className="shrink-0 w-3 h-3 rounded-sm border border-white/50 flex items-center justify-center bg-black/20 hover:bg-black/40"
                               >
-                                {b.title}
+                                {completed && (
+                                  <span className="text-[9px] leading-none">✓</span>
+                                )}
                               </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {hidden > 0 && (
-                        <div className="relative">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOverflowKey(showOverflow ? null : cellKey);
-                            }}
-                            className="text-[10px] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:underline px-1"
-                          >
-                            +{hidden} more
-                          </button>
-                          {showOverflow && (
-                            <DayOverflowPopover
-                              day={d}
-                              items={items}
-                              onClose={() => setOverflowKey(null)}
-                              onPickEvent={(b) => {
-                                setOverflowKey(null);
+                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 openEdit(b);
                               }}
-                            />
+                              className={cn(
+                                "flex-1 min-w-0 text-left truncate hover:opacity-90",
+                                completed && "line-through",
+                              )}
+                            >
+                              {b.allDay
+                                ? b.title
+                                : `${format(new Date(b.start), "h:mma").toLowerCase()} ${b.title}`}
+                            </button>
+                          </div>
+                          {isWritable(b.id) && !taskTile && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                quickDelete(b.id);
+                              }}
+                              className="absolute right-0.5 top-0 bottom-0 my-auto h-3.5 w-3.5 opacity-0 group-hover/m-event:opacity-100 rounded text-white/90 hover:text-white hover:bg-black/30 flex items-center justify-center"
+                              aria-label="Delete event"
+                              title="Delete"
+                            >
+                              <X size={9} />
+                            </button>
                           )}
                         </div>
-                      )}
-                    </div>
-                  )}
+                      );
+                    })}
+                    {hidden > 0 && (
+                      <div className="relative">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOverflowKey(showOverflow ? null : cellKey);
+                          }}
+                          className="text-[10px] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:underline px-1"
+                        >
+                          +{hidden} more
+                        </button>
+                        {showOverflow && (
+                          <DayOverflowPopover
+                            day={d}
+                            items={items}
+                            onClose={() => setOverflowKey(null)}
+                            onPickEvent={(b) => {
+                              setOverflowKey(null);
+                              openEdit(b);
+                            }}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
 
-                  {/* Hover-add on desktop, only when not in taskMode */}
+                  {/* Hover-add only when not in taskMode (taskMode uses the
+                      dragged source from the sidebar). */}
                   {!taskMode && (
                     <button
                       onClick={(e) => {
@@ -428,8 +446,8 @@ export function MonthGrid({
         ))}
       </div>
 
-      {/* Day detail list — always shown below grid on every viewport */}
-      <div className="flex flex-col flex-shrink-0 max-h-[40vh] overflow-y-auto glass rounded-3xl">
+      {/* Day detail list — mobile only. Desktop shows tiles inside the cells. */}
+      <div className="mobile-only flex flex-col flex-shrink-0 max-h-[40vh] overflow-y-auto glass rounded-3xl">
         <DayDetailList
           day={selectedDay}
           items={blocksForDay(selectedDay)}
