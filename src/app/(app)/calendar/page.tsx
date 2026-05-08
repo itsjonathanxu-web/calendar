@@ -51,6 +51,8 @@ export default async function CalendarPage({
       AND: [{ start: { lt: end } }, { end: { gt: start } }],
       rrule: null,
       recurrenceParentId: null,
+      // Hide the "Just for today" notes from week/month grids.
+      NOT: { calendar: { config: { contains: "dayOnly" } } },
     },
     include: { calendar: { include: { account: true } } },
     orderBy: { start: "asc" },
@@ -60,6 +62,7 @@ export default async function CalendarPage({
     where: {
       rrule: { not: null },
       recurrenceParentId: null,
+      NOT: { calendar: { config: { contains: "dayOnly" } } },
     },
     include: { calendar: { include: { account: true } } },
   });
@@ -68,6 +71,7 @@ export default async function CalendarPage({
     where: {
       AND: [{ start: { lt: end } }, { end: { gt: start } }],
       recurrenceParentId: { not: null },
+      NOT: { calendar: { config: { contains: "dayOnly" } } },
     },
     include: { calendar: { include: { account: true } } },
   });

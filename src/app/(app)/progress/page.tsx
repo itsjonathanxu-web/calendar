@@ -1,6 +1,12 @@
 import { startOfWeek, endOfWeek, startOfDay, endOfDay, addDays, format } from "date-fns";
 import { db } from "@/lib/db";
 import { ProgressEditor } from "./ProgressEditor";
+import { TodayPanel, type TodayItem } from "./TodayPanel";
+
+// Marker stored in Calendar.config so the rest of the app can recognize the
+// hidden "Just for today" calendar. Events here only render in the Today
+// panel, never on the calendar grids.
+export const DAY_ONLY_MARKER = "dayOnly";
 
 const WEEK_OPTS = { weekStartsOn: 0 as const };
 
@@ -87,16 +93,73 @@ export default async function ProgressPage() {
         AND: [{ start: { lt: todayEnd } }, { end: { gt: todayStart } }],
         calendar: { enabled: true, NOT: { name: "✓ Completed" } },
       },
-      include: { calendar: { select: { name: true, color: true, section: true } } },
+      include: { calendar: { select: { name: true, color: true, section: true, config: true } } },
       orderBy: [{ allDay: "desc" }, { start: "asc" }],
     }),
   ]);
 
-  // Split today into tasks (section=tasks) and schedule (everything else)
+  // Auto-create the hidden "Just for today" calendar on first visit so the
+  // quick-add input has somewhere to land.
+  let dayOnlyCal = await db.calendar.findFirst({
+    where: { config: { contains: DAY_ONLY_MARKER } },
+  });
+  if (!dayOnlyCal) {
+    const acct = await db.account.upsert({
+      where: { source_label: { source: "notion-mcp", label: "Day Notes" } },
+      create: {
+        source: "notion-mcp",
+        label: "Day Notes",
+        credentials: "{}",
+        lastSyncAt: new Date(),
+      },
+      update: {},
+    });
+    dayOnlyCal = await db.calendar.create({
+      data: {
+        accountId: acct.id,
+        sourceId: "day-notes",
+        name: "Just for today",
+        color: "#a3a3a3",
+        enabled: true,
+        section: "tasks",
+        config: JSON.stringify({ sortOrder: 999, [DAY_ONLY_MARKER]: true }),
+      },
+    });
+  }
+
+  function isDayOnly(c: { config: string | null }): boolean {
+    if (!c.config) return false;
+    try {
+      const parsed = JSON.parse(c.config) as Record<string, unknown>;
+      return Boolean(parsed[DAY_ONLY_MARKER]);
+    } catch {
+      return false;
+    }
+  }
+
+  // Split today into day-only notes, tasks (section=tasks), and schedule.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const todayTasks = todayEvents.filter((e: any) => e.calendar.section === "tasks");
+  const todayDayOnly = todayEvents.filter((e: any) => isDayOnly(e.calendar));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const todaySchedule = todayEvents.filter((e: any) => e.calendar.section !== "tasks");
+  const todayTasks = todayEvents.filter((e: any) => !isDayOnly(e.calendar) && e.calendar.section === "tasks");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const todaySchedule = todayEvents.filter((e: any) => !isDayOnly(e.calendar) && e.calendar.section !== "tasks");
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const toItem = (e: any): TodayItem => ({
+    id: e.id,
+    start: e.start.toISOString(),
+    end: e.end.toISOString(),
+    title: e.title,
+    notes: e.notes,
+    allDay: e.allDay,
+    calendarId: e.calendarId,
+    calendar: {
+      name: e.calendar.name,
+      color: e.calendar.color,
+      section: e.calendar.section ?? "scheduling",
+    },
+  });
 
   return (
     <div className="p-6 max-w-7xl space-y-6">
@@ -108,61 +171,15 @@ export default async function ProgressPage() {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LEFT — Today's overview */}
-        <section className="space-y-4">
-          <h2 className="text-xs uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Today</h2>
+        <TodayPanel
+          schedule={todaySchedule.map(toItem)}
+          tasks={todayTasks.map(toItem)}
+          dayOnly={todayDayOnly.map(toItem)}
+          dayOnlyCalendar={
+            dayOnlyCal ? { id: dayOnlyCal.id, color: dayOnlyCal.color } : null
+          }
+        />
 
-          <div className="glass rounded-xl px-4 py-3 space-y-2">
-            <div className="text-xs uppercase tracking-wider text-[var(--color-fg-muted)]">
-              Schedule
-            </div>
-            {todaySchedule.length === 0 && (
-              <div className="text-sm text-[var(--color-fg-muted)] py-2">
-                Nothing scheduled.
-              </div>
-            )}
-            {todaySchedule.map((e) => (
-              <div key={e.id} className="flex items-center gap-2 text-sm py-0.5">
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: e.calendar.color }}
-                />
-                <span className="text-[var(--color-fg-muted)] tabular-nums w-20 shrink-0 text-xs">
-                  {e.allDay ? "all-day" : formatRange(e.start, e.end)}
-                </span>
-                <span className="truncate">{e.title}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="glass rounded-xl px-4 py-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="text-xs uppercase tracking-wider text-[var(--color-fg-muted)]">
-                Tasks
-              </div>
-              <div className="text-[10px] text-[var(--color-fg-muted)]">
-                {todayTasks.length} open
-              </div>
-            </div>
-            {todayTasks.length === 0 && (
-              <div className="text-sm text-[var(--color-fg-muted)] py-2">
-                No tasks for today.
-              </div>
-            )}
-            {todayTasks.map((e) => (
-              <div key={e.id} className="flex items-center gap-2 text-sm py-0.5">
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: e.calendar.color }}
-                />
-                <span className="truncate flex-1">{e.title}</span>
-                <span className="text-[10px] text-[var(--color-fg-muted)] truncate max-w-[7rem]">
-                  {e.calendar.name}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
 
         {/* RIGHT — Weekly progress goals */}
         <section className="space-y-3">

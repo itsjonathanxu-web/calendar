@@ -16,18 +16,24 @@ export async function FilterSidebar() {
     include: { calendars: true },
   });
 
-  const flat = accounts.flatMap((a) =>
-    a.calendars.map((c) => ({
-      id: c.id,
-      name: c.name,
-      color: c.color,
-      section: (c as unknown as { section?: string }).section ?? "scheduling",
-      source: a.source,
-      accountLabel: a.label,
-      sortKey: calendarSortKey(c.config),
-      enabled: c.enabled,
-    })),
-  );
+  const flat = accounts
+    .flatMap((a) =>
+      a.calendars.map((c) => ({
+        id: c.id,
+        name: c.name,
+        color: c.color,
+        section: (c as unknown as { section?: string }).section ?? "scheduling",
+        source: a.source,
+        accountLabel: a.label,
+        sortKey: calendarSortKey(c.config),
+        enabled: c.enabled,
+        config: c.config,
+      })),
+    )
+    // Hide the "Just for today" calendar — it's surfaced only in the Progress
+    // page's Today panel.
+    .filter((c) => !(c.config && c.config.includes('"dayOnly":true')))
+    .map(({ config: _config, ...rest }) => rest);
 
   if (flat.length === 0) return null;
 
