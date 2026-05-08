@@ -277,7 +277,7 @@ export function MonthGrid({
                   onClick={() => setSelectedDay(d)}
                   onDoubleClick={() => openCreate(d)}
                   onDragOver={(e) => {
-                    if (!taskMode || !draggingId.current) return;
+                    if (!draggingId.current) return;
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
                     if (hoverDayKey !== cellKey) setHoverDayKey(cellKey);
@@ -286,7 +286,6 @@ export function MonthGrid({
                     if (hoverDayKey === cellKey) setHoverDayKey(null);
                   }}
                   onDrop={(e) => {
-                    if (!taskMode) return;
                     e.preventDefault();
                     const id = e.dataTransfer.getData("text/plain");
                     setHoverDayKey(null);
@@ -327,13 +326,14 @@ export function MonthGrid({
                     {visible.map((b) => {
                       const taskTile = taskMode && isTask(b.id);
                       const completed = isCompleted(b.id);
+                      const writable = isWritable(b.id);
                       return (
                         <div
                           key={b.id + cellKey}
                           className="relative group/m-event"
-                          draggable={taskTile}
+                          draggable={writable}
                           onDragStart={(e) => {
-                            if (!taskTile) return;
+                            if (!writable) return;
                             e.dataTransfer.setData("text/plain", b.id);
                             e.dataTransfer.effectAllowed = "move";
                             draggingId.current = b.id;
@@ -346,9 +346,9 @@ export function MonthGrid({
                           <div
                             className={cn(
                               "event-tile flex items-center gap-1 w-full text-left text-[10px] leading-snug rounded-md px-1.5 py-0.5 text-white",
-                              taskTile && "cursor-grab active:cursor-grabbing",
+                              writable && "cursor-grab active:cursor-grabbing",
                               completed && "opacity-60",
-                              isWritable(b.id) && !taskTile && "pr-4",
+                              writable && !taskTile && "pr-4",
                             )}
                             style={{ backgroundColor: muteColor(b.color) }}
                             title={`${b.title}\n${format(new Date(b.start), "p")} – ${format(new Date(b.end), "p")}`}
