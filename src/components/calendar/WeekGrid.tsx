@@ -326,6 +326,7 @@ export function WeekGrid({
         });
       } catch (err) {
         console.error("move failed:", err);
+        alert("Move failed: " + (err instanceof Error ? err.message : String(err)));
       }
       router.refresh();
     } else if (d.kind === "resize") {

@@ -152,6 +152,7 @@ export function MonthGrid({
       ? newStart.toISOString().slice(0, 10)
       : `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
     if (oldKey === newKey) return;
+    console.log("[MonthGrid] moving", { eventId, from: oldStart.toISOString(), to: newStart.toISOString() });
     try {
       await postJson("/api/events/update", {
         id: eventId,
@@ -178,6 +179,7 @@ export function MonthGrid({
       router.refresh();
     } catch (err) {
       console.error("[MonthGrid] move task failed:", err);
+      alert("Move failed: " + (err instanceof Error ? err.message : String(err)));
     }
   }
 
