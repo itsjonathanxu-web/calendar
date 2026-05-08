@@ -13,7 +13,7 @@ const HAIKU_MODEL = "claude-haiku-4-5";
 function pickModel(userMessage: string): string {
   const msg = userMessage.toLowerCase();
   const cascadeRx =
-    /\b(move|reschedule|rearrang|shift|swap|push (back|out|up|over)|fit (it|this|that)?[^.]*\band\b|other (events?|things?|stuff))\b/;
+    /\b(move|reschedule|rearrang|shift|swap|push (back|out|up|over)|fit (it|this|that)?[^.]*\band\b|other (events?|things?|stuff)|delete|remove|cancel|take out|get rid|clear)\b/;
   if (cascadeRx.test(msg)) return SONNET_MODEL;
   return HAIKU_MODEL;
 }
@@ -38,6 +38,12 @@ export type ToolUse =
       eventId: string;
       newStart: string;
       newEnd: string;
+      reasoning?: string;
+    }
+  | {
+      type: "propose_delete";
+      eventId: string;
+      title: string;
       reasoning?: string;
     };
 
@@ -99,13 +105,13 @@ function rulesBlock(rules: { text: string; priority: number }[]): string {
 }
 
 function eventsBlock(
-  events: { title: string; start: Date; end: Date; calendar: { name: string } }[],
+  events: { id: string; title: string; start: Date; end: Date; calendar: { name: string } }[],
   tz: string,
 ): string {
   if (events.length === 0) return "(calendar is empty for the next 14 days)";
   // Render in the user's LOCAL timezone so the model doesn't have to do UTC→TZ
-  // arithmetic (it gets it wrong as often as right). Also include ISO-UTC for
-  // unambiguous reference.
+  // arithmetic. Each line starts with the event id so propose_reschedule /
+  // propose_delete can refer back unambiguously.
   const fmt = (d: Date) =>
     d.toLocaleString("en-US", {
       timeZone: tz,
@@ -119,7 +125,7 @@ function eventsBlock(
   return events
     .map(
       (e) =>
-        `- ${fmt(e.start)} → ${fmt(e.end)}  [${e.start.toISOString()} → ${e.end.toISOString()}]  ${e.calendar.name}: ${e.title}`,
+        `- id=${e.id}  ${fmt(e.start)} → ${fmt(e.end)}  [${e.start.toISOString()}]  ${e.calendar.name}: ${e.title}`,
     )
     .join("\n");
 }
@@ -203,6 +209,8 @@ function systemPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
     `- Never propose events on the DO NOT USE calendars.`,
     `- If multiple recurring instances are needed (e.g. "every weekday at 7am"), use rrule on a single propose_event (FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR, etc.).`,
     `- For requests like "slot N hours" you may emit multiple propose_event calls — each one is independent.`,
+    `- To remove/cancel events the user mentions ("take out X", "remove Y", "cancel Z", "get rid of"), call propose_delete with the eventId from the upcoming events block. Pass the title verbatim so the user can verify.`,
+    `- Compound requests like "remove X and add Y" should emit BOTH propose_delete AND propose_event — never silently drop the delete.`,
     `- Be concise. If you have enough info, propose slots rather than asking questions.`,
     `- When the user states a new preference ("from now on...", "always...", "never..."), save_rule.`,
     ``,
@@ -272,6 +280,22 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "propose_delete",
+    description:
+      "Suggest deleting an existing event. Use when the user asks to take out, remove, " +
+      "cancel, or get rid of an event. The eventId must come from the calendar block " +
+      "above. Pass the title verbatim so the user can verify before confirming.",
+    input_schema: {
+      type: "object",
+      properties: {
+        eventId: { type: "string" },
+        title: { type: "string" },
+        reasoning: { type: "string" },
+      },
+      required: ["eventId", "title"],
+    },
+  },
+  {
     name: "save_rule",
     description: "Persist a new scheduling rule.",
     input_schema: {
@@ -330,6 +354,8 @@ async function backendApi(
         turn.proposals.push({ type: "propose_event", ...input });
       } else if (block.name === "propose_reschedule") {
         turn.proposals.push({ type: "propose_reschedule", ...input });
+      } else if (block.name === "propose_delete") {
+        turn.proposals.push({ type: "propose_delete", ...input });
       } else if (block.name === "save_rule") {
         turn.ruleSaves.push({ text: input.text, priority: Number(input.priority ?? 50) });
       } else if (block.name === "update_working_hours") {

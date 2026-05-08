@@ -26,6 +26,12 @@ type Proposal =
       newStart: string;
       newEnd: string;
       reasoning?: string;
+    }
+  | {
+      type: "propose_delete";
+      eventId: string;
+      title: string;
+      reasoning?: string;
     };
 
 type Msg = {
@@ -144,7 +150,7 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
         const data = await cr.json().catch(() => ({}));
         throw new Error(data.error ?? `event_create_failed (${cr.status})`);
       }
-    } else {
+    } else if (p.type === "propose_reschedule") {
       const ur = await fetch("/api/events/update", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -158,6 +164,16 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
         const data = await ur.json().catch(() => ({}));
         throw new Error(data.error ?? `event_update_failed (${ur.status})`);
       }
+    } else if (p.type === "propose_delete") {
+      const dr = await fetch("/api/events/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: p.eventId }),
+      });
+      if (!dr.ok) {
+        const data = await dr.json().catch(() => ({}));
+        throw new Error(data.error ?? `event_delete_failed (${dr.status})`);
+      }
     }
     router.refresh();
     setMessages((m) => [
@@ -168,6 +184,8 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
         content:
           p.type === "propose_event"
             ? `✓ Created "${p.title}".`
+            : p.type === "propose_delete"
+              ? `✓ Deleted "${p.title}".`
             : `✓ Moved event.`,
         proposals: [],
       },
@@ -278,24 +296,43 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
 function ProposalCard({ p, onConfirm }: { p: Proposal; onConfirm: () => Promise<void> }) {
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const start = new Date(p.type === "propose_event" ? p.start : p.newStart);
-  const end = new Date(p.type === "propose_event" ? p.end : p.newEnd);
+  const isDelete = p.type === "propose_delete";
+  const start = isDelete
+    ? null
+    : new Date(p.type === "propose_event" ? p.start : p.newStart);
+  const end = isDelete
+    ? null
+    : new Date(p.type === "propose_event" ? p.end : p.newEnd);
+  const heading =
+    p.type === "propose_event"
+      ? "Proposed event"
+      : p.type === "propose_delete"
+        ? "Proposed delete"
+        : "Proposed move";
+  const titleLine =
+    p.type === "propose_event"
+      ? p.title
+      : p.type === "propose_delete"
+        ? p.title
+        : "Reschedule";
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-xs uppercase tracking-wider text-[var(--color-fg-muted)]">
-            {p.type === "propose_event" ? "Proposed event" : "Proposed move"}
+            {heading}
           </div>
           <div className="text-sm font-medium mt-0.5">
-            {p.type === "propose_event" ? p.title : "Reschedule"}
+            {titleLine}
           </div>
-          <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-            {format(start, "EEE MMM d, h:mm a")} – {format(end, "h:mm a")}
-            {p.type === "propose_event" && p.rrule && (
-              <span className="ml-1.5">· repeats</span>
-            )}
-          </div>
+          {start && end && (
+            <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
+              {format(start, "EEE MMM d, h:mm a")} – {format(end, "h:mm a")}
+              {p.type === "propose_event" && p.rrule && (
+                <span className="ml-1.5">· repeats</span>
+              )}
+            </div>
+          )}
           {p.type === "propose_event" && p.newCategoryName && (
             <div className="text-[10px] mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 bg-white/5">
               <span
@@ -322,9 +359,14 @@ function ProposalCard({ p, onConfirm }: { p: Proposal; onConfirm: () => Promise<
                 setError(err instanceof Error ? err.message : String(err));
               }
             }}
-            className="w-full text-xs rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 font-medium"
+            className={cn(
+              "w-full text-xs rounded-md px-3 py-1.5 font-medium",
+              isDelete
+                ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border border-[var(--color-danger)]/30"
+                : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]",
+            )}
           >
-            Confirm
+            {isDelete ? "Confirm delete" : "Confirm"}
           </button>
           {error && (
             <div className="text-xs text-[var(--color-danger)] mt-1.5">

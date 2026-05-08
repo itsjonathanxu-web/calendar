@@ -44,24 +44,24 @@ export function UndoListener() {
 
   return (
     <>
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 pointer-events-none">
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 pointer-events-none">
         <button
           onClick={() => undo().then(() => router.refresh())}
           disabled={!undoable}
           aria-label="Undo (⌘Z)"
           title="Undo (⌘Z)"
-          className="pointer-events-auto glass-strong rounded-full w-9 h-9 flex items-center justify-center text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] disabled:opacity-30 disabled:cursor-not-allowed shadow-lg"
+          className="pointer-events-auto glass-strong rounded-full w-10 h-10 flex items-center justify-center text-[var(--color-fg)] hover:bg-white/[0.08] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg border border-white/10"
         >
-          <Undo2 size={14} />
+          <Undo2 size={16} />
         </button>
         <button
           onClick={() => redo().then(() => router.refresh())}
           disabled={!redoable}
           aria-label="Redo (⌘⇧Z)"
           title="Redo (⌘⇧Z)"
-          className="pointer-events-auto glass-strong rounded-full w-9 h-9 flex items-center justify-center text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] disabled:opacity-30 disabled:cursor-not-allowed shadow-lg"
+          className="pointer-events-auto glass-strong rounded-full w-10 h-10 flex items-center justify-center text-[var(--color-fg)] hover:bg-white/[0.08] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg border border-white/10"
         >
-          <Redo2 size={14} />
+          <Redo2 size={16} />
         </button>
       </div>
       {toast && (
