@@ -9,11 +9,16 @@ const COLOR_PALETTE = [
   "#0ea5e9", "#8b5cf6", "#ec4899", "#7c7c7c",
 ];
 
-export function AddTaskCategoryButton() {
+export function AddTaskCategoryButton({
+  defaultSection = "tasks",
+}: {
+  defaultSection?: "scheduling" | "tasks";
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [color, setColor] = useState(COLOR_PALETTE[4]);
+  const [section, setSection] = useState<"scheduling" | "tasks">(defaultSection);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,11 +30,12 @@ export function AddTaskCategoryButton() {
       const res = await fetch("/api/calendars/create-task-subcategory", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), color }),
+        body: JSON.stringify({ name: name.trim(), color, section }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "create failed");
       setName("");
       setColor(COLOR_PALETTE[4]);
+      setSection(defaultSection);
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -43,9 +49,12 @@ export function AddTaskCategoryButton() {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        title="Add task category"
-        aria-label="Add task category"
+        onClick={() => {
+          setSection(defaultSection);
+          setOpen(true);
+        }}
+        title="Add category"
+        aria-label="Add category"
         className="text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] w-5 h-5 flex items-center justify-center rounded hover:bg-[var(--color-fg)]/[0.06]"
       >
         <Plus size={12} />
@@ -61,7 +70,7 @@ export function AddTaskCategoryButton() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--color-border)]">
-              <div className="text-sm font-semibold">New task category</div>
+              <div className="text-sm font-semibold">New category</div>
               <button
                 onClick={() => setOpen(false)}
                 className="p-1 rounded hover:bg-[var(--color-fg)]/[0.06]"
@@ -78,6 +87,23 @@ export function AddTaskCategoryButton() {
                 autoFocus
                 className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/50 px-3 py-2 text-sm"
               />
+              <div className="flex gap-1.5 rounded-lg bg-white/5 p-1">
+                {(["scheduling", "tasks"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSection(s)}
+                    className={
+                      "flex-1 text-xs px-2 py-1.5 rounded-md capitalize transition-colors " +
+                      (section === s
+                        ? "bg-white text-black font-medium"
+                        : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]")
+                    }
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
               <div className="flex flex-wrap gap-2">
                 {COLOR_PALETTE.map((c) => (
                   <button

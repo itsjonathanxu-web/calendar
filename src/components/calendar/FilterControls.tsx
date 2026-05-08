@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { ChevronUp, ChevronDown, Pencil, X } from "lucide-react";
 import { AddTaskCategoryButton } from "./AddTaskCategoryButton";
 import { TaskModeToggle } from "./TaskModeToggle";
 import { useDeviceFilter } from "@/lib/use-device-filter";
@@ -9,6 +12,11 @@ const SOURCE_LABELS: Record<string, string> = {
   apple: "Apple",
   "notion-mcp": "Local",
 };
+
+const COLOR_PALETTE = [
+  "#dc2626", "#f97316", "#eab308", "#22c55e",
+  "#0ea5e9", "#8b5cf6", "#ec4899", "#7c7c7c",
+];
 
 type CalRow = {
   id: string;
@@ -28,6 +36,7 @@ export function FilterControls({
   initialDisabled: string[];
 }) {
   const { isEnabled, toggle } = useDeviceFilter(initialDisabled);
+  const [editing, setEditing] = useState<CalRow | null>(null);
 
   const scheduling = calendars
     .filter((c) => c.section === "scheduling")
@@ -49,7 +58,7 @@ export function FilterControls({
         <TaskModeToggle />
       </div>
 
-      <Section title="Scheduling">
+      <Section title="Scheduling" right={<AddTaskCategoryButton defaultSection="scheduling" />}>
         {Array.from(schedulingGroups.entries()).map(([key, cals]) => {
           const [source, label] = key.split("|");
           return (
@@ -57,12 +66,15 @@ export function FilterControls({
               <div className="px-2 pb-0.5 pt-1 text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]/70">
                 {SOURCE_LABELS[source] ?? source} · {label}
               </div>
-              {cals.map((c) => (
-                <CalendarToggle
+              {cals.map((c, i) => (
+                <CalendarRow
                   key={c.id}
                   c={c}
+                  group={cals}
+                  index={i}
                   enabled={isEnabled(c.id)}
                   onToggle={() => toggle(c.id)}
+                  onEdit={() => setEditing(c)}
                 />
               ))}
             </div>
@@ -75,21 +87,31 @@ export function FilterControls({
         )}
       </Section>
 
-      <Section title="Tasks" right={<AddTaskCategoryButton />}>
+      <Section title="Tasks" right={<AddTaskCategoryButton defaultSection="tasks" />}>
         {tasks.length === 0 && (
           <div className="px-2 py-1 text-xs text-[var(--color-fg-muted)]">
             No task categories yet.
           </div>
         )}
-        {tasks.map((c) => (
-          <CalendarToggle
+        {tasks.map((c, i) => (
+          <CalendarRow
             key={c.id}
             c={c}
+            group={tasks}
+            index={i}
             enabled={isEnabled(c.id)}
             onToggle={() => toggle(c.id)}
+            onEdit={() => setEditing(c)}
           />
         ))}
       </Section>
+
+      {editing && (
+        <EditCategoryDialog
+          c={editing}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -116,36 +138,235 @@ function Section({
   );
 }
 
-function CalendarToggle({
+function CalendarRow({
   c,
+  group,
+  index,
   enabled,
   onToggle,
+  onEdit,
 }: {
   c: CalRow;
+  group: CalRow[];
+  index: number;
   enabled: boolean;
   onToggle: () => void;
+  onEdit: () => void;
 }) {
+  const router = useRouter();
+
+  // Reorder by swapping sortKey with neighbor in the same section group.
+  async function reorder(dir: -1 | 1) {
+    const swapWith = group[index + dir];
+    if (!swapWith) return;
+    const a = c.sortKey;
+    const b = swapWith.sortKey;
+    // If sortKeys are tied, we still need distinct values — bump apart.
+    const newA = a === b ? b - dir : b;
+    const newB = a === b ? a : a;
+    await Promise.all([
+      fetch("/api/calendars/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: c.id, sortOrder: newA }),
+      }),
+      fetch("/api/calendars/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: swapWith.id, sortOrder: newB }),
+      }),
+    ]);
+    router.refresh();
+  }
+
+  const isFirst = index === 0;
+  const isLast = index === group.length - 1;
+
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--color-fg)]/[0.04] text-left"
-    >
-      <span
-        className={
-          "w-3 h-3 rounded-[3px] shrink-0 border " +
-          (enabled ? "border-transparent" : "border-[var(--color-border)] bg-transparent")
-        }
-        style={enabled ? { backgroundColor: c.color } : { borderColor: c.color }}
-      />
-      <span
-        className={
-          "text-sm truncate flex-1 min-w-0 " +
-          (enabled ? "text-[var(--color-fg)]" : "text-[var(--color-fg-muted)] line-through")
-        }
+    <div className="group/row flex items-center gap-1 pr-1 rounded hover:bg-[var(--color-fg)]/[0.04]">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex items-center gap-2 flex-1 min-w-0 pl-2 py-1 text-left"
       >
-        {c.name}
-      </span>
-    </button>
+        <span
+          className={
+            "w-3 h-3 rounded-[3px] shrink-0 border " +
+            (enabled ? "border-transparent" : "border-[var(--color-border)] bg-transparent")
+          }
+          style={enabled ? { backgroundColor: c.color } : { borderColor: c.color }}
+        />
+        <span
+          className={
+            "text-sm truncate flex-1 min-w-0 " +
+            (enabled ? "text-[var(--color-fg)]" : "text-[var(--color-fg-muted)] line-through")
+          }
+        >
+          {c.name}
+        </span>
+      </button>
+      <div className="opacity-0 group-hover/row:opacity-100 transition-opacity flex items-center">
+        <button
+          type="button"
+          onClick={() => reorder(-1)}
+          disabled={isFirst}
+          aria-label="Move up"
+          title="Move up"
+          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06] disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          <ChevronUp size={12} />
+        </button>
+        <button
+          type="button"
+          onClick={() => reorder(1)}
+          disabled={isLast}
+          aria-label="Move down"
+          title="Move down"
+          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06] disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          <ChevronDown size={12} />
+        </button>
+        <button
+          type="button"
+          onClick={onEdit}
+          aria-label="Edit category"
+          title="Edit"
+          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06]"
+        >
+          <Pencil size={11} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EditCategoryDialog({
+  c,
+  onClose,
+}: {
+  c: CalRow;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState(c.name);
+  const [color, setColor] = useState(c.color);
+  const [section, setSection] = useState<"scheduling" | "tasks">(
+    c.section === "scheduling" ? "scheduling" : "tasks",
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Only locally-created categories (notion-mcp source) can be safely
+  // edited. Synced calendars (google, apple) get their name/color from
+  // the source.
+  const editableSource = c.source === "notion-mcp";
+
+  async function save() {
+    if (!name.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/calendars/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: c.id,
+          name: name.trim(),
+          color,
+          section,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "update failed");
+      onClose();
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="glass-strong w-full max-w-xs rounded-2xl shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--color-border)]">
+          <div className="text-sm font-semibold">Edit category</div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--color-fg)]/[0.06]">
+            <X size={14} />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && save()}
+            placeholder="Category name"
+            disabled={!editableSource}
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/50 px-3 py-2 text-sm disabled:opacity-50"
+          />
+          <div className="flex gap-1.5 rounded-lg bg-white/5 p-1">
+            {(["scheduling", "tasks"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSection(s)}
+                className={
+                  "flex-1 text-xs px-2 py-1.5 rounded-md capitalize transition-colors " +
+                  (section === s
+                    ? "bg-white text-black font-medium"
+                    : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]")
+                }
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {COLOR_PALETTE.map((cc) => (
+              <button
+                key={cc}
+                onClick={() => setColor(cc)}
+                aria-label={`Pick color ${cc}`}
+                className={
+                  "w-6 h-6 rounded-md border " +
+                  (color === cc
+                    ? "border-white/80 ring-2 ring-white/30"
+                    : "border-white/10 hover:border-white/40")
+                }
+                style={{ backgroundColor: cc }}
+              />
+            ))}
+          </div>
+          {!editableSource && (
+            <p className="text-[10px] text-[var(--color-fg-muted)]">
+              Synced from {c.accountLabel}. Color and section can be customized;
+              renaming should be done in the source.
+            </p>
+          )}
+          {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-2.5 border-t border-[var(--color-border)]">
+          <button
+            onClick={onClose}
+            className="text-xs rounded-md border border-[var(--color-border)] px-3 py-1.5"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={busy || !name.trim()}
+            className="text-xs rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 font-medium disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

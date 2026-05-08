@@ -500,7 +500,7 @@ export function WeekGrid({
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div
           ref={gridRef}
-          className="relative grid grid-cols-[var(--cols)] overflow-hidden"
+          className="relative grid grid-cols-[var(--cols)]"
           style={{ height: TOTAL_HEIGHT, gridTemplateRows: `${TOTAL_HEIGHT}px` }}
         >
           <div className="relative">

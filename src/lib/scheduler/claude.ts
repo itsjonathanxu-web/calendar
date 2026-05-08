@@ -3,7 +3,20 @@ import { spawn } from "node:child_process";
 import { addDays } from "date-fns";
 import { db } from "@/lib/db";
 
-const MODEL = "claude-sonnet-4-6";
+const SONNET_MODEL = "claude-sonnet-4-6";
+const HAIKU_MODEL = "claude-haiku-4-5";
+
+// Route simple slot/add requests to Haiku (~15× cheaper) and reserve Sonnet
+// for messages that imply multi-event constraint solving (move, reschedule,
+// shift, push around). Anchor on intent keywords; if anything cascade-y is
+// mentioned, take the Sonnet path even if the rest of the message is short.
+function pickModel(userMessage: string): string {
+  const msg = userMessage.toLowerCase();
+  const cascadeRx =
+    /\b(move|reschedule|rearrang|shift|swap|push (back|out|up|over)|fit (it|this|that)?[^.]*\band\b|other (events?|things?|stuff))\b/;
+  if (cascadeRx.test(msg)) return SONNET_MODEL;
+  return HAIKU_MODEL;
+}
 
 export type ToolUse =
   | {
@@ -298,8 +311,9 @@ async function backendApi(
     { role: "user", content: userMessage },
   ];
 
+  const model = pickModel(userMessage);
   const res = await client.messages.create({
-    model: MODEL,
+    model,
     max_tokens: 1024,
     system: [{ type: "text", text: sys, cache_control: { type: "ephemeral" } }],
     tools: TOOLS,
