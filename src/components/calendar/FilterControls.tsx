@@ -257,8 +257,8 @@ function EditCategoryDialog({
   const [error, setError] = useState<string | null>(null);
 
   // Only locally-created categories (notion-mcp source) can be safely
-  // edited. Synced calendars (google, apple) get their name/color from
-  // the source.
+  // edited or deleted. Synced calendars (google, apple) get their name/color
+  // from the source and would re-appear on next sync.
   const editableSource = c.source === "notion-mcp";
 
   async function save() {
@@ -277,6 +277,32 @@ function EditCategoryDialog({
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "update failed");
+      onClose();
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (
+      !confirm(
+        `Delete "${c.name}" and all its events? This can't be undone.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/calendars/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: c.id }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "delete failed");
       onClose();
       router.refresh();
     } catch (err) {
@@ -351,20 +377,33 @@ function EditCategoryDialog({
           )}
           {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
         </div>
-        <div className="flex justify-end gap-2 px-4 py-2.5 border-t border-[var(--color-border)]">
-          <button
-            onClick={onClose}
-            className="text-xs rounded-md border border-[var(--color-border)] px-3 py-1.5"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={save}
-            disabled={busy || !name.trim()}
-            className="text-xs rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 font-medium disabled:opacity-50"
-          >
-            {busy ? "Saving…" : "Save"}
-          </button>
+        <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-t border-[var(--color-border)]">
+          {editableSource ? (
+            <button
+              onClick={remove}
+              disabled={busy}
+              className="text-xs text-[var(--color-danger)] hover:underline disabled:opacity-50"
+            >
+              Delete
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="text-xs rounded-md border border-[var(--color-border)] px-3 py-1.5"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              disabled={busy || !name.trim()}
+              className="text-xs rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 font-medium disabled:opacity-50"
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -127,7 +127,7 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
         calendarId = data.calendar.id;
       }
       if (!calendarId) throw new Error("no calendarId");
-      await fetch("/api/events/create", {
+      const cr = await fetch("/api/events/create", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -140,8 +140,12 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
           rrule: p.rrule ?? null,
         }),
       });
+      if (!cr.ok) {
+        const data = await cr.json().catch(() => ({}));
+        throw new Error(data.error ?? `event_create_failed (${cr.status})`);
+      }
     } else {
-      await fetch("/api/events/update", {
+      const ur = await fetch("/api/events/update", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -150,6 +154,10 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
           end: p.newEnd,
         }),
       });
+      if (!ur.ok) {
+        const data = await ur.json().catch(() => ({}));
+        throw new Error(data.error ?? `event_update_failed (${ur.status})`);
+      }
     }
     router.refresh();
     setMessages((m) => [
@@ -267,8 +275,9 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-function ProposalCard({ p, onConfirm }: { p: Proposal; onConfirm: () => void }) {
+function ProposalCard({ p, onConfirm }: { p: Proposal; onConfirm: () => Promise<void> }) {
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const start = new Date(p.type === "propose_event" ? p.start : p.newStart);
   const end = new Date(p.type === "propose_event" ? p.end : p.newEnd);
   return (
@@ -302,15 +311,27 @@ function ProposalCard({ p, onConfirm }: { p: Proposal; onConfirm: () => void }) 
         </div>
       </div>
       {!done ? (
-        <button
-          onClick={async () => {
-            await onConfirm();
-            setDone(true);
-          }}
-          className="w-full text-xs rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 font-medium"
-        >
-          Confirm
-        </button>
+        <>
+          <button
+            onClick={async () => {
+              setError(null);
+              try {
+                await onConfirm();
+                setDone(true);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              }
+            }}
+            className="w-full text-xs rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 font-medium"
+          >
+            Confirm
+          </button>
+          {error && (
+            <div className="text-xs text-[var(--color-danger)] mt-1.5">
+              Couldn&apos;t save: {error}
+            </div>
+          )}
+        </>
       ) : (
         <div className="text-xs text-emerald-600">✓ Saved</div>
       )}
