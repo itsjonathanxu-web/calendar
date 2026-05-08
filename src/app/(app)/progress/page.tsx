@@ -69,8 +69,19 @@ export default async function ProgressPage() {
   const start = startOfWeek(now, WEEK_OPTS);
   const end = endOfWeek(now, WEEK_OPTS);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
-  const todayStart = startOfDay(now);
-  const todayEnd = endOfDay(now);
+  // Server is in UTC; the user's "today" in EDT can include events that look
+  // like yesterday by UTC reckoning. Fetch a 48h window centered on now and
+  // let the client filter to the actual local "today".
+  const todayStart = new Date(now.getTime() - 24 * 3600_000);
+  const todayEnd = new Date(now.getTime() + 24 * 3600_000);
+
+  // Resolve day-only calendar ids first so we can exclude them from progress
+  // tracking. "Just for today" items live independent of goals.
+  const dayOnlyCalRows = await db.calendar.findMany({
+    where: { config: { contains: "dayOnly" } },
+    select: { id: true },
+  });
+  const dayOnlyCalIds = dayOnlyCalRows.map((c) => c.id);
 
   const [goals, events, calendars, todayEvents] = await Promise.all([
     db.progressGoal.findMany({
@@ -81,6 +92,7 @@ export default async function ProgressPage() {
       where: {
         AND: [{ start: { lt: end } }, { end: { gt: start } }],
         calendar: { enabled: true },
+        calendarId: { notIn: dayOnlyCalIds },
       },
       select: { id: true, start: true, end: true, title: true, calendarId: true, allDay: true },
     }),

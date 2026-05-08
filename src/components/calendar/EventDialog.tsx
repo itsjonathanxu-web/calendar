@@ -114,7 +114,12 @@ export function EventDialog({
       // For an instance click, default to "this only"; for a master click default to "all"
       setEditScope(mode.isInstance ? "this" : "all");
     }
-  }, [mode, calendars]);
+    // Intentionally exclude `calendars` from deps. The parent recreates this
+    // array on every render, so depending on it would re-fire this effect on
+    // every parent re-render and clobber edits the user just typed (notes,
+    // title, etc.) with the original mode values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   if (!mode) return null;
 

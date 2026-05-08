@@ -135,6 +135,54 @@ export function WeekGrid({
   const [drag, setDrag] = useState<DragState | null>(null);
   const dragRef = useRef<DragState | null>(null);
   dragRef.current = drag;
+  // Separate drag track for the all-day row (HTML5 drag-and-drop, since the
+  // timed grid's pointer-event drag would conflict with horizontal drag in
+  // such a thin row).
+  const allDayDragId = useRef<string | null>(null);
+  const [allDayDragOver, setAllDayDragOver] = useState<string | null>(null);
+
+  async function moveAllDayToDay(eventId: string, day: Date) {
+    const ev = allDay.find((b) => b.id === eventId);
+    if (!ev) return;
+    const oldStart = ev.start;
+    const oldEnd = ev.end;
+    const dur = oldEnd.getTime() - oldStart.getTime();
+    // Pin to UTC midnight of the target day so allDay sticks regardless of TZ.
+    const newStart = new Date(
+      Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0),
+    );
+    const oldKey = oldStart.toISOString().slice(0, 10);
+    const newKey = newStart.toISOString().slice(0, 10);
+    if (oldKey === newKey) return;
+    const newEnd = new Date(newStart.getTime() + dur);
+    try {
+      await postJson("/api/events/update", {
+        id: eventId,
+        start: newStart.toISOString(),
+        end: newEnd.toISOString(),
+      });
+      pushUndo({
+        label: `Move ${ev.title}`,
+        undo: async () => {
+          await postJson("/api/events/update", {
+            id: eventId,
+            start: oldStart.toISOString(),
+            end: oldEnd.toISOString(),
+          });
+        },
+        redo: async () => {
+          await postJson("/api/events/update", {
+            id: eventId,
+            start: newStart.toISOString(),
+            end: newEnd.toISOString(),
+          });
+        },
+      });
+      router.refresh();
+    } catch (err) {
+      alert("Move failed: " + (err instanceof Error ? err.message : String(err)));
+    }
+  }
 
   useEffect(() => {
     setNow(new Date());
@@ -463,11 +511,49 @@ export function WeekGrid({
             return (
               <div
                 key={i}
-                className="border-l border-[var(--color-border)] p-1 space-y-0.5 min-h-[28px]"
+                onDragOver={(e) => {
+                  if (!allDayDragId.current) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  if (allDayDragOver !== cellKey) setAllDayDragOver(cellKey);
+                }}
+                onDragLeave={() => {
+                  if (allDayDragOver === cellKey) setAllDayDragOver(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const id = e.dataTransfer.getData("text/plain");
+                  setAllDayDragOver(null);
+                  allDayDragId.current = null;
+                  if (id) moveAllDayToDay(id, d);
+                }}
+                className={cn(
+                  "border-l border-[var(--color-border)] p-1 space-y-0.5 min-h-[28px]",
+                  allDayDragOver === cellKey && "bg-white/[0.06]",
+                )}
               >
-                {items.map((it) => (
-                  <div key={it.id} className="relative group/allday">
-                    <button
+                {items.map((it) => {
+                  const writable = isWritable(it.id);
+                  return (
+                    <div
+                      key={it.id}
+                      className={cn(
+                        "event-tile relative group/allday block w-full text-[11px] rounded-md px-2 py-0.5 truncate text-white",
+                        writable && "cursor-grab active:cursor-grabbing pr-5",
+                      )}
+                      style={{ backgroundColor: muteColor(it.color) }}
+                      title={it.title}
+                      draggable={writable}
+                      onDragStart={(e) => {
+                        if (!writable) return;
+                        e.dataTransfer.setData("text/plain", it.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        allDayDragId.current = it.id;
+                      }}
+                      onDragEnd={() => {
+                        allDayDragId.current = null;
+                        setAllDayDragOver(null);
+                      }}
                       onClick={() => {
                         const det = detailsById[it.id];
                         if (!det) return;
@@ -485,27 +571,26 @@ export function WeekGrid({
                           isInstance: Boolean(det.isInstance),
                         });
                       }}
-                      className="event-tile block w-full text-left text-[11px] rounded-md px-2 py-0.5 truncate text-white pr-5"
-                      style={{ backgroundColor: muteColor(it.color) }}
-                      title={it.title}
                     >
-                      {it.title}
-                    </button>
-                    {isWritable(it.id) && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          quickDelete(it.id);
-                        }}
-                        className="absolute right-0.5 top-0 bottom-0 my-auto h-4 w-4 opacity-0 group-hover/allday:opacity-100 rounded text-white/80 hover:text-white hover:bg-black/20 flex items-center justify-center"
-                        aria-label="Delete event"
-                        title="Delete"
-                      >
-                        <X size={10} />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                      <span className="block truncate">{it.title}</span>
+                      {writable && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label="Delete event"
+                          title="Delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            quickDelete(it.id);
+                          }}
+                          className="absolute right-0.5 top-0 bottom-0 my-auto h-4 w-4 opacity-0 group-hover/allday:opacity-100 rounded text-white/80 hover:text-white hover:bg-black/20 flex items-center justify-center"
+                        >
+                          <X size={10} />
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}

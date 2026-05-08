@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, X } from "lucide-react";
+import { Plus, X, ChevronUp, ChevronDown, Trash2 } from "lucide-react";
 
 // Server passes ISO strings — Date objects formatted on server use the
 // container's TZ (UTC on Fly), which made every time on the Today panel
@@ -34,6 +34,33 @@ export function TodayPanel({
   dayOnlyCalendar: DayOnlyCalendar | null;
 }) {
   const [openNotes, setOpenNotes] = useState<TodayItem | null>(null);
+
+  // Server fetched a ±24h window because it doesn't know the user's TZ.
+  // Filter here to the browser's actual local "today" so yesterday/tomorrow
+  // events don't bleed in.
+  const filterToToday = useMemo(() => {
+    const now = new Date();
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dayEnd = new Date(dayStart.getTime() + 24 * 3600_000);
+    const cellKey = `${dayStart.getFullYear()}-${String(dayStart.getMonth() + 1).padStart(2, "0")}-${String(dayStart.getDate()).padStart(2, "0")}`;
+    return (items: TodayItem[]): TodayItem[] =>
+      items.filter((it) => {
+        const s = new Date(it.start);
+        const e = new Date(it.end);
+        if (it.allDay) {
+          // All-day events are stored at UTC midnight; compare by date string.
+          const sk = s.toISOString().slice(0, 10);
+          const ek = e.toISOString().slice(0, 10);
+          if (sk === ek) return sk === cellKey;
+          return sk <= cellKey && ek > cellKey;
+        }
+        return s < dayEnd && e > dayStart;
+      });
+  }, []);
+
+  const todaySchedule = filterToToday(schedule);
+  const todayTasks = filterToToday(tasks);
+  const todayDayOnly = filterToToday(dayOnly);
 
   return (
     <section className="space-y-4">
@@ -145,10 +172,12 @@ function DayOnlySection({
     if (!text.trim() || !calendar || busy) return;
     setBusy(true);
     try {
-      // Pin to the user's local "today" — start at this moment so it sorts
-      // alongside other tasks; allDay so it doesn't claim a time slot.
+      // Pin to local "today" + nudge by N seconds so the new note appears at
+      // the END of the existing list. Each next add picks up by reading the
+      // current count.
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      start.setSeconds(start.getSeconds() + items.length);
       const end = new Date(start.getTime() + 24 * 3600_000);
       await fetch("/api/events/create", {
         method: "POST",
@@ -162,6 +191,58 @@ function DayOnlySection({
         }),
       });
       setText("");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    setBusy(true);
+    try {
+      await fetch("/api/events/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reorder(idx: number, dir: -1 | 1) {
+    const a = items[idx];
+    const b = items[idx + dir];
+    if (!a || !b) return;
+    setBusy(true);
+    try {
+      // Swap their start timestamps so the asc-by-start order reverses for
+      // this pair. End is preserved (24h after each one's start).
+      const aStart = a.start;
+      const bStart = b.start;
+      const aDur = new Date(a.end).getTime() - new Date(a.start).getTime();
+      const bDur = new Date(b.end).getTime() - new Date(b.start).getTime();
+      await Promise.all([
+        fetch("/api/events/update", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: a.id,
+            start: bStart,
+            end: new Date(new Date(bStart).getTime() + aDur).toISOString(),
+          }),
+        }),
+        fetch("/api/events/update", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: b.id,
+            start: aStart,
+            end: new Date(new Date(aStart).getTime() + bDur).toISOString(),
+          }),
+        }),
+      ]);
       router.refresh();
     } finally {
       setBusy(false);
@@ -182,8 +263,15 @@ function DayOnlySection({
             : "Save the page once to enable this section."}
         </div>
       )}
-      {items.map((e) => (
-        <Row key={e.id} item={e} onPickNotes={onPickNotes} />
+      {items.map((e, i) => (
+        <DayOnlyRow
+          key={e.id}
+          item={e}
+          onPickNotes={onPickNotes}
+          onUp={i > 0 ? () => reorder(i, -1) : undefined}
+          onDown={i < items.length - 1 ? () => reorder(i, 1) : undefined}
+          onDelete={() => remove(e.id)}
+        />
       ))}
       {calendar && (
         <form
@@ -209,6 +297,64 @@ function DayOnlySection({
           </button>
         </form>
       )}
+    </div>
+  );
+}
+
+function DayOnlyRow({
+  item,
+  onPickNotes,
+  onUp,
+  onDown,
+  onDelete,
+}: {
+  item: TodayItem;
+  onPickNotes: (i: TodayItem) => void;
+  onUp?: () => void;
+  onDown?: () => void;
+  onDelete: () => void;
+}) {
+  const hasNotes = (item.notes ?? "").trim().length > 0;
+  return (
+    <div className="group/dayrow flex items-center gap-2 text-sm py-0.5 -mx-1 px-1 rounded hover:bg-white/[0.04]">
+      <span className="w-2 h-2 rounded-full shrink-0 bg-white/40" />
+      <button
+        onClick={() => hasNotes && onPickNotes(item)}
+        disabled={!hasNotes}
+        className={
+          "flex-1 min-w-0 text-left truncate " + (hasNotes ? "cursor-pointer" : "cursor-default")
+        }
+      >
+        {item.title}
+      </button>
+      <div className="opacity-0 group-hover/dayrow:opacity-100 transition-opacity flex items-center">
+        <button
+          onClick={onUp}
+          disabled={!onUp}
+          aria-label="Move up"
+          title="Move up"
+          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06] disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          <ChevronUp size={12} />
+        </button>
+        <button
+          onClick={onDown}
+          disabled={!onDown}
+          aria-label="Move down"
+          title="Move down"
+          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06] disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          <ChevronDown size={12} />
+        </button>
+        <button
+          onClick={onDelete}
+          aria-label="Delete"
+          title="Delete"
+          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-danger)] hover:bg-white/[0.06]"
+        >
+          <Trash2 size={11} />
+        </button>
+      </div>
     </div>
   );
 }
