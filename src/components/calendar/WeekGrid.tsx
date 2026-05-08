@@ -123,22 +123,27 @@ export function WeekGrid({
     [blocks, detailsById, isEnabled, ready],
   );
   const { timed, allDay } = useMemo(() => layoutWeek(blockObjs, dayDates), [blockObjs, dayDates]);
-  const today = new Date();
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
-  const [now, setNow] = useState<Date>(today);
+  // `now` and `today` are deferred to a client-only effect so SSR HTML and
+  // the first hydration render agree (server-TZ vs browser-TZ otherwise
+  // produces different todayIdx, today-circle class, now-line position →
+  // React #418 text/structure mismatch).
+  const [now, setNow] = useState<Date | null>(null);
+  const today = now;
   const [dialog, setDialog] = useState<DialogMode>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const dragRef = useRef<DragState | null>(null);
   dragRef.current = drag;
 
   useEffect(() => {
+    setNow(new Date());
     if (scrollRef.current) scrollRef.current.scrollTop = 7 * HOUR_HEIGHT - 24;
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);
 
-  const todayIdx = dayDates.findIndex((d) => isSameDay(d, now));
+  const todayIdx = now ? dayDates.findIndex((d) => isSameDay(d, now)) : -1;
   const colTemplate = `56px repeat(${dayDates.length}, minmax(0, 1fr))`;
 
   function getColWidth(): number {
@@ -412,7 +417,7 @@ export function WeekGrid({
       <div className="glass-subtle grid grid-cols-[var(--cols)] border-b border-[var(--color-border)]">
         <div />
         {dayDates.map((d, i) => {
-          const isToday = isSameDay(d, today);
+          const isToday = today ? isSameDay(d, today) : false;
           return (
             <div
               key={i}
@@ -531,7 +536,7 @@ export function WeekGrid({
                   />
                 ))}
 
-                {i === todayIdx && (
+                {i === todayIdx && now && (
                   <div
                     className="absolute left-0 right-0 z-10 pointer-events-none"
                     style={{ top: (now.getHours() * 60 + now.getMinutes()) * (HOUR_HEIGHT / 60) }}
@@ -585,11 +590,16 @@ export function WeekGrid({
                           if (!drag) openEdit(b);
                         }}
                         className={cn(
-                          "event-tile absolute rounded-lg text-[11px] leading-tight px-1.5 py-1 overflow-hidden text-white group/event",
+                          "event-tile rounded-lg text-[11px] leading-tight px-1.5 py-1 overflow-hidden text-white group/event",
                           writable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
                           (isMoving || isResizing) && "opacity-80 ring-2 ring-white/60 z-20",
                         )}
                         style={{
+                          // .event-tile sets position:relative for the gradient
+                          // overlay; inline absolute pins each tile inside its
+                          // day cell at the right (topMin, height) instead of
+                          // letting them flow + accumulate offsets.
+                          position: "absolute",
                           top,
                           height,
                           left: `calc(${leftPct}% + 2px)`,

@@ -68,7 +68,10 @@ export function MobileWeekList({
     });
   }, [anchor]);
 
-  const today = new Date();
+  const [today, setToday] = useState<Date | null>(null);
+  useEffect(() => {
+    setToday(new Date());
+  }, []);
 
   function blocksForDay(d: Date): SerBlock[] {
     const cellKey = format(d, "yyyy-MM-dd");
@@ -142,8 +145,8 @@ export function MobileWeekList({
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 pb-24">
         {dayDates.map((d) => {
           const items = blocksForDay(d);
-          const isToday = isSameDay(d, today);
-          const isPast = isBefore(d, startOfDay(today)) && !isToday;
+          const isToday = today ? isSameDay(d, today) : false;
+          const isPast = today ? isBefore(d, startOfDay(today)) && !isToday : false;
           return (
             <div
               key={format(d, "yyyy-MM-dd")}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format, isSameDay, isSameMonth, startOfDay } from "date-fns";
 import { X } from "lucide-react";
@@ -45,17 +45,24 @@ export function MonthGrid({
   // not UTC.
   const dayDates = days.map((d) => new Date(d + "T00:00:00"));
   const monthDate = new Date(monthAnchor + "T00:00:00");
-  const today = new Date();
   const dayLabelsShort = ["S", "M", "T", "W", "T", "F", "S"];
+  // `today` is deferred to a client-only effect so SSR HTML and the first
+  // hydration pass match (otherwise server-TZ vs browser-TZ produces a
+  // different "today" cell on either side → React #418 hydration mismatch).
+  const [today, setTodayState] = useState<Date | null>(null);
   const [dialog, setDialog] = useState<DialogMode>(null);
   const [overflowKey, setOverflowKey] = useState<string | null>(null);
-  // Apple-style mobile detail: tapping a cell selects it; the detail list
-  // below shows that day's events with full titles + times. Defaults to today
-  // (or the first day of the visible month if today is out of view).
-  const [selectedDay, setSelectedDay] = useState<Date>(() => {
-    const exists = dayDates.find((d) => isSameDay(d, today));
-    return exists ?? dayDates[0];
-  });
+  // Detail list selection. Initially defaults to the first cell to match
+  // server-render; once `today` is known, prefer today if it's in view.
+  const [selectedDay, setSelectedDay] = useState<Date>(dayDates[0]);
+
+  useEffect(() => {
+    const t = new Date();
+    setTodayState(t);
+    const exists = dayDates.find((d) => isSameDay(d, t));
+    if (exists) setSelectedDay(exists);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const router = useRouter();
   const { isEnabled, ready } = useDeviceFilter();
 
@@ -264,7 +271,7 @@ export function MonthGrid({
             {wk.map((d, di) => {
               const items = blocksForDay(d);
               const inMonth = isSameMonth(d, monthDate);
-              const isToday = isSameDay(d, today);
+              const isToday = today ? isSameDay(d, today) : false;
               const cellKey = format(d, "yyyy-MM-dd");
               const showOverflow = overflowKey === cellKey;
               const visible = items.slice(0, 3);
