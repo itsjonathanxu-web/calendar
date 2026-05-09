@@ -13,7 +13,7 @@ const HAIKU_MODEL = "claude-haiku-4-5";
 function pickModel(userMessage: string): string {
   const msg = userMessage.toLowerCase();
   const cascadeRx =
-    /\b(move|reschedule|rearrang|shift|swap|push (back|out|up|over)|fit (it|this|that)?[^.]*\band\b|other (events?|things?|stuff)|delete|remove|cancel|take out|get rid|clear)\b/;
+    /\b(move|reschedule|rearrang|shift|swap|push (back|out|up|over)|fit (it|this|that)?[^.]*\band\b|other (events?|things?|stuff)|delete|remove|cancel|take out|get rid|clear|change all|every|recategoriz|change.{0,30}category|move.{0,30}category)\b/;
   if (cascadeRx.test(msg)) return SONNET_MODEL;
   return HAIKU_MODEL;
 }
@@ -44,6 +44,15 @@ export type ToolUse =
       type: "propose_delete";
       eventId: string;
       title: string;
+      reasoning?: string;
+    }
+  | {
+      type: "propose_change_category";
+      eventId: string;
+      title: string;
+      newCalendarId?: string;
+      newCategoryName?: string;
+      newCategoryColor?: string;
       reasoning?: string;
     };
 
@@ -76,27 +85,40 @@ function pickBackend(): Backend {
 const GOOGLE_DENYLIST = new Set(["itsjonathanxu@gmail.com"]);
 
 async function buildContext() {
-  const [rules, settings, calendars, events] = await Promise.all([
+  const now = new Date();
+  // Window the chat sees. 60 days forward + 7 back (so "recent" requests like
+  // "the workout from yesterday" still resolve). Recurring masters bypass this
+  // filter — we always include them no matter how old.
+  const windowStart = addDays(now, -7);
+  const windowEnd = addDays(now, 60);
+  const [rules, settings, calendars, nonRecurring, masters] = await Promise.all([
     db.rule.findMany({ where: { active: true }, orderBy: { priority: "desc" } }),
     db.settings.findUnique({ where: { id: "settings" } }),
     db.calendar.findMany({
-      // Include Apple too for read-only awareness ("you have a 'Fitness' calendar
-      // already; if the user asks for a workout, propose a NEW event in a local
-      // task category rather than touching Apple").
       include: { account: true },
       orderBy: [{ isDefault: "desc" }, { name: "asc" }],
     }),
     db.event.findMany({
       where: {
-        start: { gte: new Date() },
-        end: { lte: addDays(new Date(), 14) },
+        AND: [{ start: { lt: windowEnd } }, { end: { gt: windowStart } }],
+        rrule: null,
+        recurrenceParentId: null,
+        calendar: { enabled: true },
+      },
+      include: { calendar: { include: { account: true } } },
+      orderBy: { start: "asc" },
+    }),
+    db.event.findMany({
+      where: {
+        rrule: { not: null },
+        recurrenceParentId: null,
         calendar: { enabled: true },
       },
       include: { calendar: { include: { account: true } } },
       orderBy: { start: "asc" },
     }),
   ]);
-  return { rules, settings, calendars, events };
+  return { rules, settings, calendars, nonRecurring, masters, windowStart, windowEnd };
 }
 
 function rulesBlock(rules: { text: string; priority: number }[]): string {
@@ -104,14 +126,17 @@ function rulesBlock(rules: { text: string; priority: number }[]): string {
   return rules.map((r) => `- [${r.priority}] ${r.text}`).join("\n");
 }
 
-function eventsBlock(
-  events: { id: string; title: string; start: Date; end: Date; calendar: { name: string } }[],
-  tz: string,
-): string {
-  if (events.length === 0) return "(calendar is empty for the next 14 days)";
-  // Render in the user's LOCAL timezone so the model doesn't have to do UTC→TZ
-  // arithmetic. Each line starts with the event id so propose_reschedule /
-  // propose_delete can refer back unambiguously.
+type EventCtx = {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date;
+  rrule: string | null;
+  calendar: { id: string; name: string };
+};
+
+function eventsBlock(events: EventCtx[], tz: string): string {
+  if (events.length === 0) return "(no non-recurring events in window)";
   const fmt = (d: Date) =>
     d.toLocaleString("en-US", {
       timeZone: tz,
@@ -125,9 +150,51 @@ function eventsBlock(
   return events
     .map(
       (e) =>
-        `- id=${e.id}  ${fmt(e.start)} → ${fmt(e.end)}  [${e.start.toISOString()}]  ${e.calendar.name}: ${e.title}`,
+        `- id=${e.id}  ${fmt(e.start)} → ${fmt(e.end)}  [${e.start.toISOString()}]  cal=${e.calendar.id} (${e.calendar.name}): ${e.title}`,
     )
     .join("\n");
+}
+
+// Recurring masters get their own block — RRULE is what the user typically
+// means when they say "every Saturday X" or "all my Y events". propose_delete
+// against the master id deletes the whole series; propose_change_category
+// against the master id moves every instance to a new calendar.
+function mastersBlock(masters: EventCtx[], tz: string): string {
+  if (masters.length === 0) return "(no recurring series)";
+  const fmt = (d: Date) =>
+    d.toLocaleString("en-US", {
+      timeZone: tz,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  return masters
+    .map(
+      (m) =>
+        `- id=${m.id}  RRULE=${m.rrule}  series-start=${fmt(m.start)}  cal=${m.calendar.id} (${m.calendar.name}): ${m.title}`,
+    )
+    .join("\n");
+}
+
+function weekdayCheatSheet(tz: string): string {
+  // Concrete dates so the model doesn't have to do day-of-week math.
+  const now = new Date();
+  const lines: string[] = [];
+  for (let i = 0; i < 28; i++) {
+    const d = new Date(now.getTime() + i * 86400_000);
+    const label = d.toLocaleString("en-US", {
+      timeZone: tz,
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    lines.push(`  ${i === 0 ? "today" : i === 1 ? "tomorrow" : "+" + i + "d"}: ${label}`);
+  }
+  return lines.join("\n");
 }
 
 type Cal = {
@@ -192,11 +259,17 @@ function systemPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
     `User's active scheduling rules (higher priority first):`,
     rulesBlock(ctx.rules),
     ``,
+    `Day-of-week reference (use these EXACT dates when the user names a weekday):`,
+    weekdayCheatSheet(tz),
+    ``,
     `Available calendars:`,
     calendarsBlock(ctx.calendars as unknown as Cal[]),
     ``,
-    `Upcoming events (next 14 days, both LOCAL time and UTC shown):`,
-    eventsBlock(ctx.events, tz),
+    `Upcoming non-recurring events (window: 7 days back, 60 days forward):`,
+    eventsBlock(ctx.nonRecurring as unknown as EventCtx[], tz),
+    ``,
+    `Recurring series (use the master id when the user says "all", "every", or "the recurring X"):`,
+    mastersBlock(ctx.masters as unknown as EventCtx[], tz),
     ``,
     `Conventions:`,
     `- Reason about times in the user's LOCAL timezone (${tz}). When emitting start/end in propose_event, output ISO-8601 with the correct offset OR UTC Z form — the UI will display them locally.`,
@@ -209,8 +282,11 @@ function systemPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
     `- Never propose events on the DO NOT USE calendars.`,
     `- If multiple recurring instances are needed (e.g. "every weekday at 7am"), use rrule on a single propose_event (FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR, etc.).`,
     `- For requests like "slot N hours" you may emit multiple propose_event calls — each one is independent.`,
-    `- To remove/cancel events the user mentions ("take out X", "remove Y", "cancel Z", "get rid of"), call propose_delete with the eventId from the upcoming events block. Pass the title verbatim so the user can verify.`,
+    `- To remove/cancel events the user mentions ("take out X", "remove Y", "cancel Z", "get rid of"), call propose_delete with the eventId from the events list. Pass the title verbatim so the user can verify.`,
+    `- "Take out all X on Saturdays" or "remove every X" → if X is in the recurring-series block, propose_delete the MASTER id (this removes the whole series). Don't try to delete one instance at a time.`,
+    `- "Change all X to category Y" or "move all X events into category Y" → use propose_change_category. Issue ONE call per matching event (recurring master + each non-recurring instance). Pass either newCalendarId (existing) or newCategoryName (auto-create).`,
     `- Compound requests like "remove X and add Y" should emit BOTH propose_delete AND propose_event — never silently drop the delete.`,
+    `- When the user says a weekday ("Saturday", "next Friday"), look up the EXACT date in the Day-of-week reference block above and use that. Do NOT guess.`,
     `- Be concise. If you have enough info, propose slots rather than asking questions.`,
     `- When the user states a new preference ("from now on...", "always...", "never..."), save_rule.`,
     ``,
@@ -283,13 +359,34 @@ const TOOLS: Anthropic.Tool[] = [
     name: "propose_delete",
     description:
       "Suggest deleting an existing event. Use when the user asks to take out, remove, " +
-      "cancel, or get rid of an event. The eventId must come from the calendar block " +
-      "above. Pass the title verbatim so the user can verify before confirming.",
+      "cancel, or get rid of an event. The eventId must come from the events list or " +
+      "the recurring-series block. For 'every Saturday X' style asks, pass the recurring " +
+      "MASTER id — that drops the whole series in one shot. Pass the title verbatim.",
     input_schema: {
       type: "object",
       properties: {
         eventId: { type: "string" },
         title: { type: "string" },
+        reasoning: { type: "string" },
+      },
+      required: ["eventId", "title"],
+    },
+  },
+  {
+    name: "propose_change_category",
+    description:
+      "Suggest changing the calendar/category of an existing local event. Use this when the user " +
+      "says 'move X to category Y', 'change all X to Y', or 'recategorize X'. Pass either " +
+      "newCalendarId (an existing calendar id) OR newCategoryName (to auto-create on confirm). " +
+      "For 'all X events', emit one tool call per matching event including any recurring master.",
+    input_schema: {
+      type: "object",
+      properties: {
+        eventId: { type: "string" },
+        title: { type: "string" },
+        newCalendarId: { type: "string" },
+        newCategoryName: { type: "string" },
+        newCategoryColor: { type: "string" },
         reasoning: { type: "string" },
       },
       required: ["eventId", "title"],
@@ -356,6 +453,8 @@ async function backendApi(
         turn.proposals.push({ type: "propose_reschedule", ...input });
       } else if (block.name === "propose_delete") {
         turn.proposals.push({ type: "propose_delete", ...input });
+      } else if (block.name === "propose_change_category") {
+        turn.proposals.push({ type: "propose_change_category", ...input });
       } else if (block.name === "save_rule") {
         turn.ruleSaves.push({ text: input.text, priority: Number(input.priority ?? 50) });
       } else if (block.name === "update_working_hours") {
@@ -407,6 +506,29 @@ const CLI_SCHEMA = {
               reasoning: { type: "string" },
             },
             required: ["type", "eventId", "newStart", "newEnd"],
+          },
+          {
+            type: "object",
+            properties: {
+              type: { const: "propose_delete" },
+              eventId: { type: "string" },
+              title: { type: "string" },
+              reasoning: { type: "string" },
+            },
+            required: ["type", "eventId", "title"],
+          },
+          {
+            type: "object",
+            properties: {
+              type: { const: "propose_change_category" },
+              eventId: { type: "string" },
+              title: { type: "string" },
+              newCalendarId: { type: "string" },
+              newCategoryName: { type: "string" },
+              newCategoryColor: { type: "string" },
+              reasoning: { type: "string" },
+            },
+            required: ["type", "eventId", "title"],
           },
           {
             type: "object",
@@ -486,7 +608,12 @@ async function backendCli(
   for (const action of parsed.actions ?? []) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const a = action as any;
-    if (a.type === "propose_event" || a.type === "propose_reschedule") {
+    if (
+      a.type === "propose_event" ||
+      a.type === "propose_reschedule" ||
+      a.type === "propose_delete" ||
+      a.type === "propose_change_category"
+    ) {
       turn.proposals.push(a as ToolUse);
     } else if (a.type === "save_rule") {
       turn.ruleSaves.push({ text: a.text, priority: Number(a.priority ?? 50) });

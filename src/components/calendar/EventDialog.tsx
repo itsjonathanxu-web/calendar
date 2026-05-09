@@ -392,10 +392,22 @@ export function EventDialog({
             <button
               type="button"
               onClick={save}
-              disabled={busy || !editable || (mode.kind === "create" && !calendarId)}
+              disabled={
+                busy ||
+                !editable ||
+                !title.trim() ||
+                (mode.kind === "create" && !calendarId)
+              }
+              title={
+                !title.trim()
+                  ? "Add a title first"
+                  : mode.kind === "create" && !calendarId
+                    ? "Pick a category first"
+                    : undefined
+              }
               className={cn(
                 "text-xs rounded-md px-3 py-1.5 font-medium",
-                editable && (mode.kind !== "create" || calendarId)
+                editable && title.trim() && (mode.kind !== "create" || calendarId)
                   ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
                   : "bg-[var(--color-fg)]/[0.1] text-[var(--color-fg-muted)] cursor-not-allowed",
               )}

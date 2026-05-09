@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const parsed = parseInstanceId(id);
     if (!parsed) return NextResponse.json({ error: "bad_instance_id" }, { status: 400 });
     return handleRecurringUpdate(parsed.masterId, parsed.occurrence, scope ?? "this", {
-      title, start, end, allDay, notes, rrule,
+      title, start, end, allDay, notes, rrule, calendarId,
     });
   }
 
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   const ev = await db.event.findUnique({ where: { id } });
   if (ev?.rrule) {
     return handleRecurringUpdate(id, ev.start, scope ?? "all", {
-      title, start, end, allDay, notes, rrule,
+      title, start, end, allDay, notes, rrule, calendarId,
     });
   }
 
@@ -68,6 +68,7 @@ async function handleRecurringUpdate(
     allDay?: boolean;
     notes?: string | null;
     rrule?: string | null;
+    calendarId?: string;
   },
 ) {
   const master = await db.event.findUnique({
@@ -96,6 +97,7 @@ async function handleRecurringUpdate(
         ...(patch.allDay !== undefined ? { allDay: patch.allDay } : {}),
         ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
         ...(patch.rrule !== undefined ? { rrule: patch.rrule } : {}),
+        ...(patch.calendarId ? { calendarId: patch.calendarId } : {}),
       },
     });
     return NextResponse.json({ ok: true, scope: "all" });

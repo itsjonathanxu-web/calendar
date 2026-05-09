@@ -32,6 +32,15 @@ type Proposal =
       eventId: string;
       title: string;
       reasoning?: string;
+    }
+  | {
+      type: "propose_change_category";
+      eventId: string;
+      title: string;
+      newCalendarId?: string;
+      newCategoryName?: string;
+      newCategoryColor?: string;
+      reasoning?: string;
     };
 
 type Msg = {
@@ -174,6 +183,34 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
         const data = await dr.json().catch(() => ({}));
         throw new Error(data.error ?? `event_delete_failed (${dr.status})`);
       }
+    } else if (p.type === "propose_change_category") {
+      let calendarId = p.newCalendarId;
+      if (!calendarId && p.newCategoryName) {
+        const r = await fetch("/api/calendars/create-task-subcategory", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: p.newCategoryName,
+            color: p.newCategoryColor ?? "#7c7c7c",
+            section: "scheduling",
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok || !data.calendar?.id) {
+          throw new Error(data.error ?? "category_create_failed");
+        }
+        calendarId = data.calendar.id;
+      }
+      if (!calendarId) throw new Error("no target calendar");
+      const ur = await fetch("/api/events/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: p.eventId, calendarId, scope: "all" }),
+      });
+      if (!ur.ok) {
+        const data = await ur.json().catch(() => ({}));
+        throw new Error(data.error ?? `event_update_failed (${ur.status})`);
+      }
     }
     router.refresh();
     setMessages((m) => [
@@ -186,7 +223,9 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
             ? `✓ Created "${p.title}".`
             : p.type === "propose_delete"
               ? `✓ Deleted "${p.title}".`
-            : `✓ Moved event.`,
+              : p.type === "propose_change_category"
+                ? `✓ Moved "${p.title}" to new category.`
+                : `✓ Moved event.`,
         proposals: [],
       },
     ]);
@@ -327,24 +366,35 @@ function ProposalCard({
   }
   const [error, setError] = useState<string | null>(null);
   const isDelete = p.type === "propose_delete";
-  const start = isDelete
-    ? null
-    : new Date(p.type === "propose_event" ? p.start : p.newStart);
-  const end = isDelete
-    ? null
-    : new Date(p.type === "propose_event" ? p.end : p.newEnd);
+  const isChangeCat = p.type === "propose_change_category";
+  const start =
+    p.type === "propose_event"
+      ? new Date(p.start)
+      : p.type === "propose_reschedule"
+        ? new Date(p.newStart)
+        : null;
+  const end =
+    p.type === "propose_event"
+      ? new Date(p.end)
+      : p.type === "propose_reschedule"
+        ? new Date(p.newEnd)
+        : null;
   const heading =
     p.type === "propose_event"
       ? "Proposed event"
       : p.type === "propose_delete"
         ? "Proposed delete"
-        : "Proposed move";
+        : p.type === "propose_change_category"
+          ? "Proposed category change"
+          : "Proposed move";
   const titleLine =
     p.type === "propose_event"
       ? p.title
       : p.type === "propose_delete"
         ? p.title
-        : "Reschedule";
+        : p.type === "propose_change_category"
+          ? p.title
+          : "Reschedule";
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -370,6 +420,17 @@ function ProposalCard({
                 style={{ backgroundColor: p.newCategoryColor ?? "#7c7c7c" }}
               />
               new category: {p.newCategoryName}
+            </div>
+          )}
+          {isChangeCat && p.type === "propose_change_category" && (
+            <div className="text-[10px] mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 bg-white/5">
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ backgroundColor: p.newCategoryColor ?? "#7c7c7c" }}
+              />
+              {p.newCategoryName
+                ? `new category: ${p.newCategoryName}`
+                : "move to existing category"}
             </div>
           )}
           {p.reasoning && (
