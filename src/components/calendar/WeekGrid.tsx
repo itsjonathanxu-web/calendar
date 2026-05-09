@@ -69,7 +69,11 @@ type DragState =
   | {
       kind: "resize";
       eventId: string;
+      // Which edge the user grabbed: "bottom" extends end-time, "top" pushes
+      // start-time earlier (drag up to start the event earlier).
+      edge: "bottom" | "top";
       pointerStartY: number;
+      initialStartMin: number;
       initialDurationMin: number;
       dayIndex: number;
       deltaMin: number;
@@ -266,15 +270,22 @@ export function WeekGrid({
     });
   }
 
-  function resizePointerDown(e: React.PointerEvent, b: LaidOutBlock) {
+  function resizePointerDown(
+    e: React.PointerEvent,
+    b: LaidOutBlock,
+    edge: "bottom" | "top",
+  ) {
     if (!isWritable(b.id)) return;
     e.preventDefault();
     e.stopPropagation();
+    justDraggedRef.current = false;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     setDrag({
       kind: "resize",
+      edge,
       eventId: b.id,
       pointerStartY: e.clientY,
+      initialStartMin: b.topMin,
       initialDurationMin: b.durationMin,
       dayIndex: b.dayIndex,
       deltaMin: 0,
@@ -324,6 +335,7 @@ export function WeekGrid({
       });
     } else if (d.kind === "resize") {
       const dy = e.clientY - d.pointerStartY;
+      if (Math.abs(dy) >= 4) justDraggedRef.current = true;
       setDrag({ ...d, deltaMin: snap((dy / HOUR_HEIGHT) * 60) });
     } else if (d.kind === "create") {
       setDrag({ ...d, endDayIdx: pointerToDayIdx(e.clientX), endMin: pointerToMinutes(e.clientY) });
@@ -397,30 +409,40 @@ export function WeekGrid({
       if (d.deltaMin === 0) return;
       const block = timed.find((b) => b.id === d.eventId);
       if (!block) return;
-      const newDuration = Math.max(SNAP_MIN, d.initialDurationMin + d.deltaMin);
-      const start = block.start;
+      const oldStart = block.start;
       const oldEnd = block.end;
-      const end = addMinutes(start, newDuration);
+      let newStart = oldStart;
+      let newEnd = oldEnd;
+      if (d.edge === "bottom") {
+        // Drag down extends end-time; drag up shortens it (min 1 snap step).
+        const newDuration = Math.max(SNAP_MIN, d.initialDurationMin + d.deltaMin);
+        newEnd = addMinutes(oldStart, newDuration);
+      } else {
+        // Top edge: drag up moves start earlier (negative deltaMin), drag
+        // down moves it later. End stays put. Min 1 snap step duration.
+        const newDuration = Math.max(SNAP_MIN, d.initialDurationMin - d.deltaMin);
+        newStart = addMinutes(oldEnd, -newDuration);
+      }
       try {
         await fetchPost("/api/events/update", {
           id: d.eventId,
-          start: start.toISOString(),
-          end: end.toISOString(),
+          start: newStart.toISOString(),
+          end: newEnd.toISOString(),
         });
         pushUndo({
           label: `Resize ${block.title}`,
           undo: async () => {
             await postJson("/api/events/update", {
               id: d.eventId,
-              start: start.toISOString(),
+              start: oldStart.toISOString(),
               end: oldEnd.toISOString(),
             });
           },
           redo: async () => {
             await postJson("/api/events/update", {
               id: d.eventId,
-              start: start.toISOString(),
-              end: end.toISOString(),
+              start: newStart.toISOString(),
+              end: newEnd.toISOString(),
             });
           },
         });
@@ -682,12 +704,25 @@ export function WeekGrid({
                   .map((b) => {
                     const isMoving = drag?.kind === "move" && drag.eventId === b.id;
                     const isResizing = drag?.kind === "resize" && drag.eventId === b.id;
-                    const top = isMoving
-                      ? b.topMin * (HOUR_HEIGHT / 60) + drag.deltaMin * (HOUR_HEIGHT / 60)
-                      : b.topMin * (HOUR_HEIGHT / 60);
-                    const dur = isResizing
-                      ? Math.max(SNAP_MIN, drag.initialDurationMin + drag.deltaMin)
-                      : b.durationMin;
+                    // Top-edge resize: dragging up (negative deltaMin) makes
+                    // the event start earlier, so top moves up AND duration
+                    // grows. Bottom-edge resize: top stays, duration changes
+                    // by deltaMin. Move drag: top shifts by deltaMin, dur
+                    // unchanged.
+                    let top = b.topMin * (HOUR_HEIGHT / 60);
+                    let dur = b.durationMin;
+                    if (isMoving) {
+                      top = (b.topMin + drag.deltaMin) * (HOUR_HEIGHT / 60);
+                    } else if (isResizing) {
+                      if (drag.edge === "bottom") {
+                        dur = Math.max(SNAP_MIN, drag.initialDurationMin + drag.deltaMin);
+                      } else {
+                        // edge === "top": top moves by deltaMin, duration
+                        // grows by -deltaMin (drag up = negative delta).
+                        dur = Math.max(SNAP_MIN, drag.initialDurationMin - drag.deltaMin);
+                        top = (b.topMin + drag.deltaMin) * (HOUR_HEIGHT / 60);
+                      }
+                    }
                     const height = dur * (HOUR_HEIGHT / 60);
                     const widthPct = isMoving ? 100 : 100 / b.laneCount;
                     const leftPct = isMoving ? 0 : b.lane * widthPct;
@@ -746,11 +781,18 @@ export function WeekGrid({
                           </button>
                         )}
                         {writable && (
-                          <div
-                            onPointerDown={(e) => resizePointerDown(e, b)}
-                            className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize bg-white/0 hover:bg-white/30"
-                            title="Drag to resize"
-                          />
+                          <>
+                            <div
+                              onPointerDown={(e) => resizePointerDown(e, b, "top")}
+                              className="absolute left-0 right-0 top-0 h-1.5 cursor-ns-resize bg-white/0 hover:bg-white/30"
+                              title="Drag to start earlier"
+                            />
+                            <div
+                              onPointerDown={(e) => resizePointerDown(e, b, "bottom")}
+                              className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize bg-white/0 hover:bg-white/30"
+                              title="Drag to end later"
+                            />
+                          </>
                         )}
                       </div>
                     );
