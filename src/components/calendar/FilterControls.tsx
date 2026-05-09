@@ -45,11 +45,16 @@ export function FilterControls({
     .filter((c) => c.section === "tasks")
     .sort((a, b) => a.sortKey - b.sortKey || a.name.localeCompare(b.name));
 
-  const schedulingGroups = new Map<string, CalRow[]>();
-  for (const c of scheduling) {
-    const key = `${c.source}|${c.accountLabel}`;
-    if (!schedulingGroups.has(key)) schedulingGroups.set(key, []);
-    schedulingGroups.get(key)!.push(c);
+  // Google calendars stay grouped per account (the "Holidays in Canada" /
+  // gmail-account split matters). Everything else collapses into one
+  // unlabeled bucket directly under "Scheduling".
+  const localScheduling = scheduling.filter((c) => c.source !== "google");
+  const googleScheduling = scheduling.filter((c) => c.source === "google");
+  const googleGroups = new Map<string, CalRow[]>();
+  for (const c of googleScheduling) {
+    const key = c.accountLabel;
+    if (!googleGroups.has(key)) googleGroups.set(key, []);
+    googleGroups.get(key)!.push(c);
   }
 
   return (
@@ -59,27 +64,35 @@ export function FilterControls({
       </div>
 
       <Section title="Scheduling" right={<AddTaskCategoryButton defaultSection="scheduling" />}>
-        {Array.from(schedulingGroups.entries()).map(([key, cals]) => {
-          const [source, label] = key.split("|");
-          return (
-            <div key={key} className="space-y-0.5">
-              <div className="px-2 pb-0.5 pt-1 text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]/70">
-                {SOURCE_LABELS[source] ?? source} · {label}
-              </div>
-              {cals.map((c, i) => (
-                <CalendarRow
-                  key={c.id}
-                  c={c}
-                  group={cals}
-                  index={i}
-                  enabled={isEnabled(c.id)}
-                  onToggle={() => toggle(c.id)}
-                  onEdit={() => setEditing(c)}
-                />
-              ))}
+        {localScheduling.map((c, i) => (
+          <CalendarRow
+            key={c.id}
+            c={c}
+            group={localScheduling}
+            index={i}
+            enabled={isEnabled(c.id)}
+            onToggle={() => toggle(c.id)}
+            onEdit={() => setEditing(c)}
+          />
+        ))}
+        {Array.from(googleGroups.entries()).map(([label, cals]) => (
+          <div key={label} className="space-y-0.5">
+            <div className="px-2 pb-0.5 pt-3 text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]/70">
+              {SOURCE_LABELS.google} · {label}
             </div>
-          );
-        })}
+            {cals.map((c, i) => (
+              <CalendarRow
+                key={c.id}
+                c={c}
+                group={cals}
+                index={i}
+                enabled={isEnabled(c.id)}
+                onToggle={() => toggle(c.id)}
+                onEdit={() => setEditing(c)}
+              />
+            ))}
+          </div>
+        ))}
         {scheduling.length === 0 && (
           <div className="px-2 py-1 text-xs text-[var(--color-fg-muted)]">
             No synced calendars yet.
