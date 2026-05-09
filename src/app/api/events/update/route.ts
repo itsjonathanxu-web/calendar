@@ -20,12 +20,10 @@ export async function POST(request: Request) {
   };
   if (!id) return NextResponse.json({ error: "missing_id" }, { status: 400 });
 
-  // Trace what's coming in so we can pin down the recurring "notes don't save" reports.
-  if (notes !== undefined) {
-    console.log(
-      `[events/update] id=${id} scope=${scope ?? "(default)"} notes=${JSON.stringify(notes)?.slice(0, 80)} title=${title ? "set" : "skip"} cal=${calendarId ? "set" : "skip"}`,
-    );
-  }
+  // Aggressive trace until the notes-save bug is pinned down.
+  console.log(
+    `[events/update] id=${id} notes=${notes === undefined ? "(undefined)" : JSON.stringify(notes)?.slice(0, 80)} title=${title === undefined ? "(undefined)" : "set"} scope=${scope ?? "(default)"}`,
+  );
 
   // Recurring instance — id looks like "masterId::ISO"
   if (isInstanceId(id)) {
