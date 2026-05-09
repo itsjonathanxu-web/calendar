@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { snapshotDb } from "@/lib/backup";
-import { pull as pullApple } from "@/lib/sources/apple";
 import { SEED_TASKS } from "@/app/api/debug/seed-tasks-manual/data";
+
+const MAY_2026_LABEL = "Migrated from Apple (May 2026)";
 
 const PROGRESS_PRESETS = [
   {
@@ -117,30 +118,149 @@ export async function reseedProgress(): Promise<{ ok: boolean; message: string }
   };
 }
 
-export async function wipeAndResyncApple(): Promise<{ ok: boolean; message: string }> {
-  const accounts = await db.account.findMany({ where: { source: "apple" } });
-  if (accounts.length === 0) return { ok: false, message: "No Apple account connected" };
-  let deleted = 0;
-  let pulled = 0;
-  for (const account of accounts) {
-    const cals = await db.calendar.findMany({ where: { accountId: account.id } });
-    for (const cal of cals) {
-      const res = await db.event.deleteMany({ where: { calendarId: cal.id, kind: "event" } });
-      deleted += res.count;
-    }
-    const result = await pullApple(account.id);
-    pulled += result.events;
-  }
-  revalidatePath("/calendar");
-  revalidatePath("/admin");
-  return { ok: true, message: `Deleted ${deleted} stale rows, re-pulled ${pulled}` };
-}
-
 export async function runBackupNow(): Promise<{ ok: boolean; message: string }> {
   const result = await snapshotDb();
   revalidatePath("/admin");
   if (!result) return { ok: false, message: "Backup skipped (db not found)" };
   return { ok: true, message: `Snapshot ${(result.bytes / 1024).toFixed(1)} KB → ${result.path}` };
+}
+
+// One-time: copy every May 2026 Apple-sourced event into a parallel local
+// account/calendar so we can disconnect iCloud without losing the month.
+// Idempotent — re-running upserts by sourceId so duplicates don't pile up.
+export async function migrateAppleMayToLocal(): Promise<{ ok: boolean; message: string }> {
+  const appleAccounts = await db.account.findMany({ where: { source: "apple" } });
+  if (appleAccounts.length === 0) {
+    return { ok: false, message: "No Apple account connected" };
+  }
+
+  // May 2026, local-ish (the Apple events are stored as UTC instants from
+  // CalDAV; "May 2026" here is intentionally a wide UTC window so EDT-evening
+  // May-1 events on either edge come along).
+  const monthStart = new Date(Date.UTC(2026, 4, 1, 0, 0, 0));
+  const monthEnd = new Date(Date.UTC(2026, 5, 1, 0, 0, 0));
+
+  const localAccount = await db.account.upsert({
+    where: { source_label: { source: "notion-mcp", label: MAY_2026_LABEL } },
+    create: {
+      source: "notion-mcp",
+      label: MAY_2026_LABEL,
+      credentials: "{}",
+      lastSyncAt: new Date(),
+    },
+    update: {},
+  });
+
+  let copied = 0;
+  let updated = 0;
+  let calendarsTouched = 0;
+
+  for (const acct of appleAccounts) {
+    const appleCals = await db.calendar.findMany({ where: { accountId: acct.id } });
+    for (const appleCal of appleCals) {
+      // Only the events the user actually saw from iCloud — kind="event".
+      // Locally-added Apple-calendar items (kind="task") are already in the DB
+      // independent of CalDAV so they don't need migrating.
+      const events = await db.event.findMany({
+        where: {
+          calendarId: appleCal.id,
+          kind: "event",
+          start: { gte: monthStart, lt: monthEnd },
+        },
+      });
+      if (events.length === 0) continue;
+
+      // Mirror each Apple calendar to a local twin (same name/color) so the
+      // sidebar layout doesn't change visually.
+      const twin = await db.calendar.upsert({
+        where: {
+          accountId_sourceId: {
+            accountId: localAccount.id,
+            sourceId: `apple-mirror::${appleCal.id}`,
+          },
+        },
+        create: {
+          accountId: localAccount.id,
+          sourceId: `apple-mirror::${appleCal.id}`,
+          name: appleCal.name,
+          color: appleCal.color,
+          enabled: true,
+          section: "scheduling",
+        },
+        update: { name: appleCal.name, color: appleCal.color },
+      });
+      calendarsTouched += 1;
+
+      for (const ev of events) {
+        const sourceId = `apple-import::${ev.sourceId}`;
+        const existing = await db.event.findUnique({
+          where: { calendarId_sourceId: { calendarId: twin.id, sourceId } },
+        });
+        if (existing) {
+          await db.event.update({
+            where: { id: existing.id },
+            data: {
+              title: ev.title,
+              start: ev.start,
+              end: ev.end,
+              allDay: ev.allDay,
+              notes: ev.notes,
+            },
+          });
+          updated += 1;
+        } else {
+          await db.event.create({
+            data: {
+              calendarId: twin.id,
+              sourceId,
+              title: ev.title,
+              start: ev.start,
+              end: ev.end,
+              allDay: ev.allDay,
+              notes: ev.notes,
+              kind: "task", // local-only marker, prevents Apple resync from clobbering
+            },
+          });
+          copied += 1;
+        }
+      }
+    }
+  }
+
+  revalidatePath("/calendar");
+  revalidatePath("/progress");
+  revalidatePath("/admin");
+  return {
+    ok: true,
+    message: `Mirrored ${calendarsTouched} calendar${calendarsTouched === 1 ? "" : "s"} · ${copied} new, ${updated} updated`,
+  };
+}
+
+// One-shot: drop every Apple Account + its Calendars/Events. Run after the
+// May-2026 migration above so the local twins are the only copy left.
+export async function disconnectAppleEntirely(): Promise<{ ok: boolean; message: string }> {
+  const appleAccounts = await db.account.findMany({ where: { source: "apple" } });
+  if (appleAccounts.length === 0) {
+    return { ok: false, message: "No Apple account to disconnect" };
+  }
+  let removedAccounts = 0;
+  let removedEvents = 0;
+  for (const acct of appleAccounts) {
+    const cals = await db.calendar.findMany({ where: { accountId: acct.id } });
+    for (const cal of cals) {
+      const r = await db.event.deleteMany({ where: { calendarId: cal.id } });
+      removedEvents += r.count;
+    }
+    await db.account.delete({ where: { id: acct.id } });
+    removedAccounts += 1;
+  }
+  revalidatePath("/calendar");
+  revalidatePath("/settings");
+  revalidatePath("/admin");
+  return {
+    ok: true,
+    message: `Removed ${removedAccounts} Apple account${removedAccounts === 1 ? "" : "s"} and ${removedEvents} synced event row${removedEvents === 1 ? "" : "s"}`,
+  };
 }
 
 export async function deleteTaskCategory(calendarId: string): Promise<{ ok: boolean; message: string }> {

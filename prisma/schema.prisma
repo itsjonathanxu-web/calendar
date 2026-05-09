@@ -148,6 +148,10 @@ model Settings {
   // Push notifications
   remindersEnabled  Boolean @default(true)
   reminderLeadMin   Int     @default(15) // minutes before an event to notify
+
+  // ICS feed token — required query param on /api/feed to authorize iCloud
+  // subscriptions and any other read-only consumer. Rotated from settings.
+  feedToken         String?
 }
 
 // Cron heartbeat — one row per job kind, updated on each successful tick.

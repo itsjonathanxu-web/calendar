@@ -1,9 +1,11 @@
 import { Trash2 } from "lucide-react";
+import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { isGoogleConfigured } from "@/lib/sources/google";
 import { formatDistanceToNow } from "date-fns";
 import { PushSettings } from "@/components/PushSettings";
 import { RemindersCRUD, type ReminderRow } from "@/components/RemindersCRUD";
+import { FeedUrlField } from "@/components/FeedUrlField";
 
 const messages: Record<string, { kind: "ok" | "err"; text: string }> = {
   google_not_configured: {
@@ -23,12 +25,10 @@ const messages: Record<string, { kind: "ok" | "err"; text: string }> = {
     text: "Notion rejected the token. Make sure the integration is shared with at least one database.",
   },
   notion_sync_failed: { kind: "err", text: "Notion sync failed — check the server log." },
-  apple_missing: { kind: "err", text: "Apple ID and app password are both required." },
-  apple_connect_failed: {
+  apple_retired: {
     kind: "err",
-    text: "iCloud rejected the credentials. Use an app-specific password from appleid.apple.com.",
+    text: "Apple iCloud sync has been retired. Use the read-only feed in Calendar feed instead.",
   },
-  apple_sync_failed: { kind: "err", text: "Apple sync failed — check the server log." },
   not_found: { kind: "err", text: "Account not found." },
 };
 
@@ -165,57 +165,96 @@ export default async function SettingsPage({
         </div>
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium">Apple Calendar (iCloud)</h2>
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] divide-y divide-[var(--color-border)]">
-          <form action="/api/sources/apple/connect" method="post" className="px-4 py-3 space-y-2">
-            <label className="block text-sm font-medium">iCloud credentials</label>
-            <div className="flex gap-2">
-              <input
-                type="email"
-                name="username"
-                placeholder="apple-id@icloud.com"
-                required
-                className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-sm"
-              />
-              <input
-                type="password"
-                name="password"
-                placeholder="app-specific password"
-                required
-                className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-sm font-mono"
-              />
-              <button
-                type="submit"
-                className="text-xs rounded-md border border-[var(--color-border)] px-3 py-1.5 hover:bg-[var(--color-fg)]/[0.04]"
-              >
-                Connect
-              </button>
-            </div>
-            <p className="text-xs text-[var(--color-fg-muted)]">
-              Generate an app-specific password at{" "}
-              <a
-                className="underline"
-                target="_blank"
-                rel="noreferrer"
-                href="https://appleid.apple.com"
-              >
-                appleid.apple.com
-              </a>
-              {" "}→ Sign-In and Security → App-Specific Passwords. Stored encrypted locally.
+      {appleAccounts.length > 0 && (
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-sm font-medium">Apple Calendar (iCloud) — retired</h2>
+            <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+              Two-way iCloud sync is no longer supported. Use the read-only feed above to
+              mirror this app into iOS Calendar instead. Disconnect any leftover account
+              after running the May migration in Admin.
             </p>
-          </form>
-          {appleAccounts.map((a) => (
-            <AccountRow key={a.id} account={a} withCalendarToggles />
-          ))}
-        </div>
-      </section>
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] divide-y divide-[var(--color-border)]">
+            {appleAccounts.map((a) => (
+              <AccountRow key={a.id} account={a} withCalendarToggles />
+            ))}
+          </div>
+        </section>
+      )}
 
+      <CalendarFeedSection />
       <NotificationsSection />
       <RemindersSection />
       <WorkingHoursSection />
       <RulesSection />
     </div>
+  );
+}
+
+async function CalendarFeedSection() {
+  const settings = await db.settings.findUnique({ where: { id: "settings" } });
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
+  const proto = h.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
+  const origin = host ? `${proto}://${host}` : "";
+  const token = settings?.feedToken ?? null;
+  const url = token ? `${origin}/api/feed.ics?token=${token}` : null;
+  // iCloud needs webcal:// to auto-open the subscribe sheet on iOS/macOS.
+  const webcalUrl = url ? url.replace(/^https?:\/\//, "webcal://") : null;
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-sm font-medium">Calendar feed (subscribe)</h2>
+        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+          Paste this URL into iCloud / iPhone Calendar to mirror everything you schedule
+          here, read-only. Updates flow out within ~1 hour (Apple polls subscriptions).
+        </p>
+      </div>
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] p-4 space-y-3">
+        {!token ? (
+          <form action="/api/settings/feed-token" method="post">
+            <input type="hidden" name="action" value="ensure" />
+            <button
+              type="submit"
+              className="text-xs rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 font-medium"
+            >
+              Generate subscription URL
+            </button>
+          </form>
+        ) : (
+          <>
+            <div className="space-y-1">
+              <label className="block text-xs text-[var(--color-fg-muted)]">HTTPS URL</label>
+              <FeedUrlField url={url ?? ""} />
+            </div>
+            {webcalUrl && (
+              <div className="space-y-1">
+                <label className="block text-xs text-[var(--color-fg-muted)]">
+                  webcal:// (tap on iPhone to subscribe automatically)
+                </label>
+                <FeedUrlField url={webcalUrl} />
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <p className="text-xs text-[var(--color-fg-muted)]">
+                Anyone with this URL can read your calendar. Rotate to invalidate the old one.
+              </p>
+              <form action="/api/settings/feed-token" method="post">
+                <input type="hidden" name="action" value="rotate" />
+                <button
+                  type="submit"
+                  className="text-xs rounded-md border border-[var(--color-border)] px-3 py-1.5 hover:bg-[var(--color-fg)]/[0.04]"
+                >
+                  Rotate token
+                </button>
+              </form>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
 

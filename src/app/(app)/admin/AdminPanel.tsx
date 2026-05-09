@@ -6,7 +6,8 @@ import { Trash2, Loader2 } from "lucide-react";
 import {
   reseedTasks,
   reseedProgress,
-  wipeAndResyncApple,
+  migrateAppleMayToLocal,
+  disconnectAppleEntirely,
   runBackupNow,
   deleteTaskCategory,
 } from "./actions";
@@ -122,7 +123,7 @@ export function AdminPanel({
       <Section title="Sync">
         {accounts.length === 0 ? (
           <div className="text-sm text-[var(--color-fg-muted)] px-1">
-            No sources connected. Add Apple/Google in Settings.
+            No sources connected. Add Google in Settings.
           </div>
         ) : (
           <div className="space-y-1">
@@ -144,14 +145,25 @@ export function AdminPanel({
             ))}
           </div>
         )}
-        <Action
-          label="Wipe + re-sync Apple"
-          desc="Drops every Apple-sourced event row and re-pulls from iCloud. Use when duplicate or stale recurring events stick around."
-          busy={pending && pendingId === "wipe-apple"}
-          onRun={() => run("wipe-apple", wipeAndResyncApple)}
-          variant="danger"
-        />
       </Section>
+
+      {accounts.some((a) => a.source === "apple") && (
+        <Section title="Apple migration">
+          <Action
+            label="Mirror May 2026 Apple events into local"
+            desc="Copies every Apple-sourced event between May 1–31 2026 into a local 'Migrated from Apple' account, mirroring your iCloud calendars (name + color). Idempotent. Run this BEFORE disconnecting."
+            busy={pending && pendingId === "migrate-may"}
+            onRun={() => run("migrate-may", migrateAppleMayToLocal)}
+          />
+          <Action
+            label="Disconnect Apple entirely"
+            desc="Removes every Apple account, calendar, and synced event row from this app. Local mirrors stay. iCloud itself is untouched. Run this AFTER you've confirmed May looks right in the calendar view."
+            busy={pending && pendingId === "disconnect-apple"}
+            onRun={() => run("disconnect-apple", disconnectAppleEntirely)}
+            variant="danger"
+          />
+        </Section>
+      )}
 
       <Section title="Backup">
         <Action
