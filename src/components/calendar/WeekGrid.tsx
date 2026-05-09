@@ -248,6 +248,8 @@ export function WeekGrid({
     if (!isWritable(b.id)) return;
     e.preventDefault();
     e.stopPropagation();
+    // Reset the drag-vs-click flag for this new interaction.
+    justDraggedRef.current = false;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     setDrag({
       kind: "move",
@@ -309,6 +311,10 @@ export function WeekGrid({
       const colW = getColWidth();
       const dy = e.clientY - d.pointerStartY;
       const dx = e.clientX - d.pointerStartX;
+      // Mark "this is a drag, not a click" the moment motion crosses the
+      // threshold — gets the flag set even if the user releases on a
+      // different element (where pointerup may not fire on the tile).
+      if (Math.hypot(dx, dy) >= 4) justDraggedRef.current = true;
       setDrag({
         ...d,
         deltaMin: snap((dy / HOUR_HEIGHT) * 60),

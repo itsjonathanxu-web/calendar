@@ -88,6 +88,19 @@ export function EventDialog({
   const [repeat, setRepeat] = useState<RepeatPreset>("none");
   const [until, setUntil] = useState<string>("");
   const [editScope, setEditScope] = useState<"all" | "this" | "future">("all");
+  // Snapshot of the values when the dialog opened — used to short-circuit
+  // auto-save if nothing actually changed (otherwise an unchanged dialog
+  // close would clobber a concurrent drag with the original times).
+  const initialRef = useRef<{
+    title: string;
+    calendarId: string;
+    startStr: string;
+    endStr: string;
+    allDay: boolean;
+    notes: string;
+    repeat: RepeatPreset;
+    until: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!mode) return;
@@ -102,17 +115,35 @@ export function EventDialog({
       setRepeat("none");
       setUntil("");
       setEditScope("all");
+      initialRef.current = null;
     } else {
-      setTitle(mode.title);
-      setCalendarId(mode.calendarId);
-      setStartStr(toLocalInput(mode.start));
-      setEndStr(toLocalInput(mode.end));
-      setAllDay(mode.allDay);
-      setNotes(mode.notes ?? "");
-      setRepeat(rruleToPreset(mode.rrule));
-      setUntil(rruleUntil(mode.rrule));
-      // For an instance click, default to "this only"; for a master click default to "all"
+      const t = mode.title;
+      const c = mode.calendarId;
+      const s = toLocalInput(mode.start);
+      const e = toLocalInput(mode.end);
+      const a = mode.allDay;
+      const n = mode.notes ?? "";
+      const r = rruleToPreset(mode.rrule);
+      const u = rruleUntil(mode.rrule);
+      setTitle(t);
+      setCalendarId(c);
+      setStartStr(s);
+      setEndStr(e);
+      setAllDay(a);
+      setNotes(n);
+      setRepeat(r);
+      setUntil(u);
       setEditScope(mode.isInstance ? "this" : "all");
+      initialRef.current = {
+        title: t,
+        calendarId: c,
+        startStr: s,
+        endStr: e,
+        allDay: a,
+        notes: n,
+        repeat: r,
+        until: u,
+      };
     }
     // Intentionally exclude `calendars` from deps. The parent recreates this
     // array on every render, so depending on it would re-fire this effect on
@@ -120,6 +151,21 @@ export function EventDialog({
     // title, etc.) with the original mode values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
+
+  function isDirty(): boolean {
+    const init = initialRef.current;
+    if (!init) return true;
+    return (
+      title !== init.title ||
+      calendarId !== init.calendarId ||
+      startStr !== init.startStr ||
+      endStr !== init.endStr ||
+      allDay !== init.allDay ||
+      notes !== init.notes ||
+      repeat !== init.repeat ||
+      until !== init.until
+    );
+  }
 
   if (!mode) return null;
 
@@ -130,12 +176,12 @@ export function EventDialog({
         mode.source === "notion" ||
         mode.source === "notion-mcp"));
 
-  // Auto-save on backdrop click or X — user kept losing their notes because
-  // the textarea grew on focus and pushed the Save button under their cursor.
-  // Cancel button is the explicit "discard" path; everything else commits.
+  // Auto-save on backdrop click or X. Only fires when the form is actually
+  // dirty — otherwise an unchanged close would PUT the original values back
+  // and silently clobber any concurrent drag updates that happened between
+  // when the dialog opened and when it closed.
   function autoCloseAndSave() {
-    if (mode?.kind === "edit" && editable && title.trim()) {
-      // save() already calls onClose() on success.
+    if (mode?.kind === "edit" && editable && title.trim() && isDirty()) {
       save();
     } else {
       onClose();
