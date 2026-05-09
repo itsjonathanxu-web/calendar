@@ -104,21 +104,58 @@ export function AddTaskCategoryButton({
                   </button>
                 ))}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {COLOR_PALETTE.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setColor(c)}
-                    aria-label={`Pick color ${c}`}
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap gap-2 items-center">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setColor(c)}
+                      aria-label={`Pick color ${c}`}
+                      className={
+                        "w-6 h-6 rounded-md border " +
+                        (color === c
+                          ? "border-white/80 ring-2 ring-white/30"
+                          : "border-white/10 hover:border-white/40")
+                      }
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                  <label
+                    title="Custom color"
                     className={
-                      "w-6 h-6 rounded-md border " +
-                      (color === c
-                        ? "border-white/80 ring-2 ring-white/30"
-                        : "border-white/10 hover:border-white/40")
+                      "w-6 h-6 rounded-md border cursor-pointer relative overflow-hidden " +
+                      (COLOR_PALETTE.includes(color)
+                        ? "border-white/10 hover:border-white/40"
+                        : "border-white/80 ring-2 ring-white/30")
                     }
-                    style={{ backgroundColor: c }}
-                  />
-                ))}
+                    style={
+                      COLOR_PALETTE.includes(color)
+                        ? {
+                            background:
+                              "conic-gradient(from 0deg, #ef4444, #f97316, #eab308, #22c55e, #3b82f6, #8b5cf6, #ec4899, #ef4444)",
+                          }
+                        : { backgroundColor: color }
+                    }
+                  >
+                    <input
+                      type="color"
+                      value={color}
+                      onChange={(e) => setColor(e.target.value)}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      aria-label="Custom color picker"
+                    />
+                  </label>
+                </div>
+                <input
+                  type="text"
+                  value={color}
+                  onChange={(e) => {
+                    const v = e.target.value.trim();
+                    if (/^#[0-9a-fA-F]{6}$/.test(v) || v === "") setColor(v || color);
+                  }}
+                  placeholder="#7c7c7c"
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/50 px-2 py-1 text-xs font-mono"
+                />
               </div>
               {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
             </div>

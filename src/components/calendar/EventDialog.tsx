@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
-import { X, Trash2 } from "lucide-react";
+import { X, Trash2, ChevronDown, Check } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export type WritableCalendar = {
@@ -301,23 +301,14 @@ export function EventDialog({
           </div>
 
           {mode.kind === "create" && (
-            <label className="block text-xs text-[var(--color-fg-muted)]">
-              Calendar
-              <select
+            <div className="space-y-1">
+              <div className="text-xs text-[var(--color-fg-muted)]">Category</div>
+              <CategoryPicker
+                calendars={calendars}
                 value={calendarId}
-                onChange={(e) => setCalendarId(e.target.value)}
-                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
-              >
-                {calendars.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} — {c.accountLabel}
-                  </option>
-                ))}
-                {calendars.length === 0 && (
-                  <option value="">(connect a writable Google account)</option>
-                )}
-              </select>
-            </label>
+                onChange={setCalendarId}
+              />
+            </div>
           )}
 
           {/* Edit scope (only when editing a recurring event/instance) */}
@@ -411,4 +402,89 @@ export function EventDialog({
 
 function toLocalInput(d: Date): string {
   return format(d, "yyyy-MM-dd'T'HH:mm");
+}
+
+function CategoryPicker({
+  calendars,
+  value,
+  onChange,
+}: {
+  calendars: WritableCalendar[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const sorted = [...calendars].sort((a, b) => a.name.localeCompare(b.name));
+  const selected = sorted.find((c) => c.id === value) ?? sorted[0];
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (sorted.length === 0) {
+    return (
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg-muted)]">
+        Connect a writable Google account, or add a category in the sidebar.
+      </div>
+    );
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm hover:bg-[var(--color-fg)]/[0.04]"
+      >
+        <span
+          className="w-3 h-3 rounded-full shrink-0"
+          style={{ backgroundColor: selected?.color ?? "#7c7c7c" }}
+        />
+        <span className="flex-1 text-left truncate">{selected?.name ?? "Pick category"}</span>
+        <ChevronDown size={14} className="text-[var(--color-fg-muted)] shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-20 max-h-72 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elev)] shadow-lg py-1">
+          {sorted.map((c) => {
+            const isSel = c.id === value;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => {
+                  onChange(c.id);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--color-fg)]/[0.06]",
+                  isSel && "bg-[var(--color-fg)]/[0.04]",
+                )}
+              >
+                <span
+                  className="w-3 h-3 rounded-full shrink-0"
+                  style={{ backgroundColor: c.color }}
+                />
+                <span className="flex-1 truncate">{c.name}</span>
+                {isSel && <Check size={14} className="text-[var(--color-fg-muted)] shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }

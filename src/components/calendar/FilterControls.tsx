@@ -174,9 +174,19 @@ function CalendarRow({
     if (!swapWith) return;
     const a = c.sortKey;
     const b = swapWith.sortKey;
-    // If sortKeys are tied, we still need distinct values — bump apart.
-    const newA = a === b ? b - dir : b;
-    const newB = a === b ? a : a;
+    // Distinct keys → straight swap. Ties (everyone at the default 50) → push c
+    // past swapWith in the requested direction; keep swapWith where it is.
+    // The previous formula used `b - dir` which moved c the wrong way and
+    // made the up/down arrows feel broken.
+    let newA: number;
+    let newB: number;
+    if (a !== b) {
+      newA = b;
+      newB = a;
+    } else {
+      newA = b + dir;
+      newB = b;
+    }
     await Promise.all([
       fetch("/api/calendars/update", {
         method: "POST",
@@ -366,21 +376,64 @@ function EditCategoryDialog({
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap gap-2">
-            {COLOR_PALETTE.map((cc) => (
-              <button
-                key={cc}
-                onClick={() => setColor(cc)}
-                aria-label={`Pick color ${cc}`}
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap gap-2 items-center">
+              {COLOR_PALETTE.map((cc) => (
+                <button
+                  key={cc}
+                  onClick={() => setColor(cc)}
+                  aria-label={`Pick color ${cc}`}
+                  className={
+                    "w-6 h-6 rounded-md border " +
+                    (color === cc
+                      ? "border-white/80 ring-2 ring-white/30"
+                      : "border-white/10 hover:border-white/40")
+                  }
+                  style={{ backgroundColor: cc }}
+                />
+              ))}
+              <label
+                title="Custom color"
                 className={
-                  "w-6 h-6 rounded-md border " +
-                  (color === cc
-                    ? "border-white/80 ring-2 ring-white/30"
-                    : "border-white/10 hover:border-white/40")
+                  "w-6 h-6 rounded-md border cursor-pointer relative overflow-hidden " +
+                  (COLOR_PALETTE.includes(color)
+                    ? "border-white/10 hover:border-white/40"
+                    : "border-white/80 ring-2 ring-white/30")
                 }
-                style={{ backgroundColor: cc }}
+                style={
+                  COLOR_PALETTE.includes(color)
+                    ? {
+                        background:
+                          "conic-gradient(from 0deg, #ef4444, #f97316, #eab308, #22c55e, #3b82f6, #8b5cf6, #ec4899, #ef4444)",
+                      }
+                    : { backgroundColor: color }
+                }
+              >
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  aria-label="Custom color picker"
+                />
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <span
+                className="w-3 h-3 rounded-sm border border-white/10"
+                style={{ backgroundColor: color }}
               />
-            ))}
+              <input
+                type="text"
+                value={color}
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  if (/^#[0-9a-fA-F]{6}$/.test(v) || v === "") setColor(v || color);
+                }}
+                placeholder="#7c7c7c"
+                className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/50 px-2 py-1 text-xs font-mono"
+              />
+            </div>
           </div>
           {!editableSource && (
             <p className="text-[10px] text-[var(--color-fg-muted)]">
