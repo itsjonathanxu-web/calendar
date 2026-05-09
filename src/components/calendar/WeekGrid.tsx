@@ -135,6 +135,11 @@ export function WeekGrid({
   const [drag, setDrag] = useState<DragState | null>(null);
   const dragRef = useRef<DragState | null>(null);
   dragRef.current = drag;
+  // After a real drag, the browser still fires a click event on the tile —
+  // which would re-open the editor and (with auto-save-on-close) overwrite
+  // the drag with the old times. Set a flag in onPointerUp and clear it on
+  // the next pointer down so the click handler can skip.
+  const justDraggedRef = useRef(false);
   // Separate drag track for the all-day row (HTML5 drag-and-drop, since the
   // timed grid's pointer-event drag would conflict with horizontal drag in
   // such a thin row).
@@ -326,19 +331,24 @@ export function WeekGrid({
     (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
 
     if (d.kind === "move") {
-      // Distinguish a click (no real motion) from a tiny drag using raw
-      // pixel delta. Snapped (deltaMin/deltaDay) can both be 0 even when the
-      // user clearly dragged (just less than 15 minutes vertically).
+      // Distinguish a true click (no motion) from any drag — even tiny ones.
+      // Anything past 4px is a drag and must NEVER pop the editor; it commits
+      // the new time silently. The browser will still fire `click` after
+      // pointerup on the same element, so we set justDraggedRef to short-
+      // circuit that click in the onClick handler.
       const pxMoved = Math.hypot(d.pixelDx, d.pixelDy);
       if (pxMoved < 4) {
-        const block = timed.find((b) => b.id === d.eventId);
-        if (block) openEdit(block);
+        // Real click — let the onClick handler open the editor.
         return;
       }
-      // Below the snap threshold but past the click threshold — user dragged
-      // but not far enough to register a different time. Don't update, don't
-      // pop the dialog.
-      if (d.deltaMin === 0 && d.deltaDay === 0) return;
+      justDraggedRef.current = true;
+      // If the drag rounded to zero (e.g. 6px vertical = under 15min snap),
+      // bump it to the minimum snap step so the drag still feels like an
+      // edit. Otherwise the user drags noticeably and nothing changes.
+      if (d.deltaMin === 0 && d.deltaDay === 0) {
+        const dir = d.pixelDy < 0 ? -1 : 1;
+        d.deltaMin = SNAP_MIN * dir;
+      }
       const block = timed.find((b) => b.id === d.eventId);
       if (!block) return;
       if (!isWritable(block.id)) return;
@@ -682,6 +692,14 @@ export function WeekGrid({
                         onPointerDown={(e) => writable && eventPointerDown(e, b)}
                         onClick={(e) => {
                           e.stopPropagation();
+                          // Skip if we just finished a drag — the browser fires
+                          // click after pointerup on the same element, which
+                          // would re-open the editor and clobber the new time
+                          // via auto-save-on-close.
+                          if (justDraggedRef.current) {
+                            justDraggedRef.current = false;
+                            return;
+                          }
                           if (!drag) openEdit(b);
                         }}
                         className={cn(
