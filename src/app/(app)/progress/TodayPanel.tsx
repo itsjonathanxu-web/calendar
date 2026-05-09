@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, X, Trash2, GripVertical } from "lucide-react";
+import { Plus, X, Trash2, GripVertical, ChevronLeft, ChevronRight } from "lucide-react";
 import { useReorderDrag } from "@/lib/use-reorder-drag";
 
 // Server passes ISO strings — Date objects formatted on server use the
@@ -35,21 +35,23 @@ export function TodayPanel({
   dayOnlyCalendar: DayOnlyCalendar | null;
 }) {
   const [openNotes, setOpenNotes] = useState<TodayItem | null>(null);
+  // dayOffset = 0 today, +1 tomorrow, -1 yesterday. Stepper buttons below
+  // adjust this; the filter rebuilds against the right calendar day in the
+  // user's local TZ.
+  const [dayOffset, setDayOffset] = useState(0);
 
-  // Server fetched a ±24h window because it doesn't know the user's TZ.
-  // Filter here to the browser's actual local "today" so yesterday/tomorrow
-  // events don't bleed in.
-  const filterToToday = useMemo(() => {
-    const now = new Date();
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const dayEnd = new Date(dayStart.getTime() + 24 * 3600_000);
+  const { filterToDay, focusedDay } = useMemo(() => {
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    base.setDate(base.getDate() + dayOffset);
+    const dayStart = base;
+    const dayEnd = new Date(base.getTime() + 24 * 3600_000);
     const cellKey = `${dayStart.getFullYear()}-${String(dayStart.getMonth() + 1).padStart(2, "0")}-${String(dayStart.getDate()).padStart(2, "0")}`;
-    return (items: TodayItem[]): TodayItem[] =>
+    const filter = (items: TodayItem[]): TodayItem[] =>
       items.filter((it) => {
         const s = new Date(it.start);
         const e = new Date(it.end);
         if (it.allDay) {
-          // All-day events are stored at UTC midnight; compare by date string.
           const sk = s.toISOString().slice(0, 10);
           const ek = e.toISOString().slice(0, 10);
           if (sk === ek) return sk === cellKey;
@@ -57,15 +59,66 @@ export function TodayPanel({
         }
         return s < dayEnd && e > dayStart;
       });
-  }, []);
+    return { filterToDay: filter, focusedDay: dayStart };
+  }, [dayOffset]);
 
-  const todaySchedule = filterToToday(schedule);
-  const todayTasks = filterToToday(tasks);
-  const todayDayOnly = filterToToday(dayOnly);
+  const todaySchedule = filterToDay(schedule);
+  const todayTasks = filterToDay(tasks);
+  const todayDayOnly = filterToDay(dayOnly);
+
+  // Friendly heading: "Today", "Tomorrow", or weekday + date for further steps.
+  const dayLabel = (() => {
+    if (dayOffset === 0) return "Today";
+    if (dayOffset === 1) return "Tomorrow";
+    if (dayOffset === -1) return "Yesterday";
+    return focusedDay.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+    });
+  })();
 
   return (
     <section className="space-y-4">
-      <h2 className="text-xs uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Today</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-xs uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">
+          {dayLabel}
+          {dayOffset !== 0 && (
+            <span className="ml-2 text-[var(--color-fg-muted)] normal-case tracking-normal">
+              {focusedDay.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+            </span>
+          )}
+        </h2>
+        <div className="flex items-center gap-1 text-[var(--color-fg-muted)]">
+          <button
+            type="button"
+            onClick={() => setDayOffset((o) => o - 1)}
+            aria-label="Previous day"
+            title="Previous day"
+            className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-[var(--color-fg)]/[0.06]"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          {dayOffset !== 0 && (
+            <button
+              type="button"
+              onClick={() => setDayOffset(0)}
+              className="text-[10px] uppercase tracking-wider px-1.5 h-6 flex items-center rounded-md hover:bg-[var(--color-fg)]/[0.06]"
+            >
+              Today
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setDayOffset((o) => o + 1)}
+            aria-label="Next day"
+            title="Next day"
+            className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-[var(--color-fg)]/[0.06]"
+          >
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
 
       <ItemCard title="Schedule">
         {todaySchedule.length === 0 && <Empty msg="Nothing scheduled." />}

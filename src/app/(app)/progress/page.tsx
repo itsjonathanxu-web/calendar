@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { startOfWeek, endOfWeek, startOfDay, endOfDay, addDays, format } from "date-fns";
 import { db } from "@/lib/db";
 import { ProgressEditor } from "./ProgressEditor";
@@ -84,16 +86,41 @@ function progressFor(goal: Goal, events: EventRow[], days: Date[], tz: string) {
   return { value: matched.length, label: `${matched.length} / ${goal.target}` };
 }
 
-export default async function ProgressPage() {
+function parseAnchor(s: string | undefined): Date {
+  if (s) {
+    const d = new Date(s + "T00:00:00");
+    if (!isNaN(d.getTime())) return d;
+  }
+  return new Date();
+}
+
+function isoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
+export default async function ProgressPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ w?: string }>;
+}) {
+  const sp = await searchParams;
+  const anchor = parseAnchor(sp.w);
   const now = new Date();
-  const start = startOfWeek(now, WEEK_OPTS);
-  const end = endOfWeek(now, WEEK_OPTS);
+  const start = startOfWeek(anchor, WEEK_OPTS);
+  const end = endOfWeek(anchor, WEEK_OPTS);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
-  // Server is in UTC; the user's "today" in EDT can include events that look
-  // like yesterday by UTC reckoning. Fetch a 48h window centered on now and
-  // let the client filter to the actual local "today".
+  // Today panel can step through days within this 14-day window. Wider than
+  // the visible week so "tomorrow" still has events when the user advances.
   const todayStart = new Date(now.getTime() - 24 * 3600_000);
-  const todayEnd = new Date(now.getTime() + 24 * 3600_000);
+  const todayEnd = new Date(now.getTime() + 14 * 86400_000);
+
+  const prevWeek = isoDate(addDays(start, -7));
+  const nextWeek = isoDate(addDays(start, 7));
+  const thisWeek = isoDate(now);
+  const isCurrentWeek = isoDate(start) === isoDate(startOfWeek(now, WEEK_OPTS));
 
   // Resolve day-only calendar ids first so we can exclude them from progress
   // tracking. "Just for today" items live independent of goals.
@@ -204,11 +231,42 @@ export default async function ProgressPage() {
 
   return (
     <div className="p-6 max-w-7xl space-y-6">
-      <header>
-        <h1 className="text-lg font-semibold tracking-tight">Progress</h1>
-        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-          <TodayDateLabel />
-        </p>
+      <header className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">Progress</h1>
+          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+            <TodayDateLabel />
+          </p>
+        </div>
+        <div className="flex items-center gap-1 text-[var(--color-fg-muted)]">
+          <Link
+            aria-label="Previous week"
+            href={`/progress?w=${prevWeek}`}
+            title="Previous week"
+            className="w-8 h-8 flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-fg)]/[0.06]"
+          >
+            <ChevronLeft size={16} />
+          </Link>
+          {!isCurrentWeek && (
+            <Link
+              href={`/progress?w=${thisWeek}`}
+              className="text-xs px-2.5 h-8 flex items-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-fg)]/[0.04]"
+            >
+              This week
+            </Link>
+          )}
+          <div className="text-xs px-2 tabular-nums hidden sm:block">
+            {format(start, "MMM d")} – {format(end, "MMM d")}
+          </div>
+          <Link
+            aria-label="Next week"
+            href={`/progress?w=${nextWeek}`}
+            title="Next week"
+            className="w-8 h-8 flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-fg)]/[0.06]"
+          >
+            <ChevronRight size={16} />
+          </Link>
+        </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
