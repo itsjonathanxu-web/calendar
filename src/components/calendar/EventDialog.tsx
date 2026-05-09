@@ -130,6 +130,18 @@ export function EventDialog({
         mode.source === "notion" ||
         mode.source === "notion-mcp"));
 
+  // Auto-save on backdrop click or X — user kept losing their notes because
+  // the textarea grew on focus and pushed the Save button under their cursor.
+  // Cancel button is the explicit "discard" path; everything else commits.
+  function autoCloseAndSave() {
+    if (mode?.kind === "edit" && editable && title.trim()) {
+      // save() already calls onClose() on success.
+      save();
+    } else {
+      onClose();
+    }
+  }
+
   async function save() {
     if (!mode) return;
     setBusy(true);
@@ -215,7 +227,7 @@ export function EventDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/40 backdrop-blur-sm" onClick={autoCloseAndSave}>
       <div
         className="glass-strong w-full max-w-md rounded-2xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -224,7 +236,7 @@ export function EventDialog({
           <div className="text-sm font-semibold">
             {mode.kind === "create" ? "New event" : "Edit event"}
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--color-fg)]/[0.06]">
+          <button onClick={autoCloseAndSave} className="p-1 rounded hover:bg-[var(--color-fg)]/[0.06]">
             <X size={16} />
           </button>
         </div>
@@ -434,17 +446,17 @@ function NotesField({
   onChange: (v: string) => void;
   disabled: boolean;
 }) {
-  const [focused, setFocused] = useState(false);
+  // Fixed height so growing the textarea doesn't push the Save button down
+  // mid-click — user kept missing Save because the layout shifted under
+  // their finger. Drag the corner to resize if you want more room.
   return (
     <textarea
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
       placeholder="Notes"
       disabled={disabled}
-      rows={focused || value.length > 100 ? 12 : 3}
-      className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm resize-y transition-[height] duration-150"
+      rows={6}
+      className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm resize-y"
     />
   );
 }
