@@ -7,7 +7,7 @@ type Scope = "this" | "future" | "all";
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
-  const { id, title, start, end, allDay, notes, rrule, scope } = body as {
+  const { id, title, start, end, allDay, notes, rrule, scope, calendarId } = body as {
     id?: string;
     title?: string;
     start?: string;
@@ -16,6 +16,7 @@ export async function POST(request: Request) {
     notes?: string | null;
     rrule?: string | null;
     scope?: Scope;
+    calendarId?: string;
   };
   if (!id) return NextResponse.json({ error: "missing_id" }, { status: 400 });
 
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
       ...(end ? { end: new Date(end) } : {}),
       ...(allDay !== undefined ? { allDay } : {}),
       ...(notes !== undefined ? { notes } : {}),
+      ...(calendarId ? { calendarId } : {}),
     });
     return NextResponse.json({ ok: true });
   } catch (err) {

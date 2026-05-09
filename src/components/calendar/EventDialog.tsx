@@ -154,6 +154,7 @@ export function EventDialog({
         });
         if (!res.ok) throw new Error((await res.json()).error ?? "create failed");
       } else {
+        const movedCalendar = calendarId && calendarId !== mode.calendarId;
         const res = await fetch("/api/events/update", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -166,6 +167,7 @@ export function EventDialog({
             notes: notes || null,
             rrule,
             scope: editScope,
+            ...(movedCalendar ? { calendarId } : {}),
           }),
         });
         if (!res.ok) throw new Error((await res.json()).error ?? "update failed");
@@ -300,14 +302,24 @@ export function EventDialog({
             )}
           </div>
 
-          {mode.kind === "create" && (
+          {(mode.kind === "create" ||
+            (mode.kind === "edit" && editable && mode.source !== "google")) && (
             <div className="space-y-1">
               <div className="text-xs text-[var(--color-fg-muted)]">Category</div>
               <CategoryPicker
-                calendars={calendars}
+                calendars={
+                  mode.kind === "edit"
+                    ? calendars.filter((c) => c.source !== "google")
+                    : calendars
+                }
                 value={calendarId}
                 onChange={setCalendarId}
               />
+              {mode.kind === "edit" && (
+                <p className="text-[10px] text-[var(--color-fg-muted)]/70">
+                  Pick another category to move this event.
+                </p>
+              )}
             </div>
           )}
 
@@ -340,13 +352,10 @@ export function EventDialog({
             </div>
           )}
 
-          <textarea
+          <NotesField
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Notes"
+            onChange={setNotes}
             disabled={!editable}
-            rows={3}
-            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm resize-none"
           />
 
           {!editable && mode.kind === "edit" && (
@@ -402,6 +411,30 @@ export function EventDialog({
 
 function toLocalInput(d: Date): string {
   return format(d, "yyyy-MM-dd'T'HH:mm");
+}
+
+function NotesField({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled: boolean;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <textarea
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      placeholder="Notes"
+      disabled={disabled}
+      rows={focused || value.length > 100 ? 12 : 3}
+      className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm resize-y transition-[height] duration-150"
+    />
+  );
 }
 
 function CategoryPicker({

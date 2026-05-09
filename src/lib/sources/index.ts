@@ -48,13 +48,36 @@ export async function createEvent(calendarId: string, input: EventInput): Promis
 
 export async function updateEvent(
   eventId: string,
-  input: Partial<EventInput>,
+  input: Partial<EventInput> & { calendarId?: string },
 ): Promise<void> {
   const ev = await db.event.findUnique({
     where: { id: eventId },
     include: { calendar: { include: { account: true } } },
   });
   if (!ev) throw new Error("Event not found");
+
+  // Cross-calendar moves (changing category). Only applies when the user
+  // picked a different calendarId. Currently only local↔local moves; Google
+  // events stay where they are because the Google API needs a different code
+  // path (events.move) and we don't want to silently lose data.
+  if (input.calendarId && input.calendarId !== ev.calendarId) {
+    if (ev.calendar.account.source === "google") {
+      throw new Error("Moving Google events between calendars isn't supported yet — edit in google.com/calendar.");
+    }
+    const target = await db.calendar.findUnique({
+      where: { id: input.calendarId },
+      include: { account: true },
+    });
+    if (!target) throw new Error("Target calendar not found");
+    if (target.account.source !== "notion-mcp") {
+      throw new Error("Can only move events into local categories");
+    }
+    await db.event.update({
+      where: { id: eventId },
+      data: { calendarId: input.calendarId },
+    });
+    // Fall through so any other field changes (title/start/end/notes) also apply.
+  }
 
   if (ev.calendar.account.source === "google") return google.updateEvent(eventId, input);
 
