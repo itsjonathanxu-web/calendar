@@ -120,10 +120,80 @@ export function MonthGrid({
     }
   }
 
-  // HTML5 drag — simpler than pointer events for task-mode reschedule. Only
-  // active when in task mode; preserves the time-of-day, just changes the date.
+  // Pointer-based drag. HTML5 drag worked on desktop but iOS Safari is
+  // unreliable, and even on desktop a click-vs-drag handoff was awkward. Now
+  // we own the gesture: pointer down stores the candidate, after a few px of
+  // motion we enter "moving" mode (visual ghost + hit-test cells via
+  // elementFromPoint), pointer up either drops or treats it as a click.
   const draggingId = useRef<string | null>(null);
-  const [hoverDayKey, setHoverDayKey] = useState<string | null>(null);
+  const dragMovedRef = useRef(false);
+  const hoverDayKeyRef = useRef<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [hoverDayKey, _setHoverDayKey] = useState<string | null>(null);
+  const setHoverDayKey = (k: string | null) => {
+    hoverDayKeyRef.current = k;
+    _setHoverDayKey(k);
+  };
+
+  function onTilePointerDown(e: React.PointerEvent, eventId: string, writable: boolean) {
+    if (!writable) return;
+    if (e.button !== 0) return;
+    draggingId.current = eventId;
+    dragMovedRef.current = false;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+
+    function onMove(ev: PointerEvent) {
+      if (draggingId.current !== eventId) return;
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!dragMovedRef.current && Math.hypot(dx, dy) >= 6) {
+        dragMovedRef.current = true;
+        setMovingId(eventId);
+      }
+      if (dragMovedRef.current) {
+        const el = document.elementFromPoint(ev.clientX, ev.clientY);
+        const cell = el?.closest("[data-day-key]") as HTMLElement | null;
+        const key = cell?.getAttribute("data-day-key") ?? null;
+        setHoverDayKey(key);
+      }
+    }
+
+    function onUp(ev: PointerEvent) {
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onUp);
+      try {
+        target.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* already released */
+      }
+      const wasDrag = dragMovedRef.current;
+      const dropKey = hoverDayKeyRef.current;
+      draggingId.current = null;
+      dragMovedRef.current = false;
+      setMovingId(null);
+      setHoverDayKey(null);
+      if (!wasDrag) {
+        // It was a click — open the edit dialog.
+        const block = blocks.find((b) => b.id === eventId);
+        if (block) {
+          openEdit(block);
+        }
+        return;
+      }
+      if (!dropKey) return;
+      const target_d = dayDates.find((d) => format(d, "yyyy-MM-dd") === dropKey);
+      if (!target_d) return;
+      moveTaskToDay(eventId, target_d);
+    }
+
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onUp);
+  }
 
   async function moveTaskToDay(eventId: string, day: Date) {
     const ev = blocks.find((b) => b.id === eventId);
@@ -283,27 +353,13 @@ export function MonthGrid({
               return (
                 <div
                   key={di}
+                  data-day-key={cellKey}
                   onClick={() => setSelectedDay(d)}
                   onDoubleClick={() => openCreate(d)}
-                  onDragOver={(e) => {
-                    if (!draggingId.current) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                    if (hoverDayKey !== cellKey) setHoverDayKey(cellKey);
-                  }}
-                  onDragLeave={() => {
-                    if (hoverDayKey === cellKey) setHoverDayKey(null);
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const id = e.dataTransfer.getData("text/plain");
-                    setHoverDayKey(null);
-                    draggingId.current = null;
-                    if (id) moveTaskToDay(id, d);
-                  }}
                   className={cn(
                     "flex flex-col items-center lg:items-stretch pt-2 px-1 relative group cursor-pointer transition-colors",
                     !inMonth && "opacity-30",
+                    movingId && hoverDayKey === cellKey && "bg-white/[0.08]",
                     isHoverTarget && "bg-white/[0.06]",
                   )}
                 >
@@ -344,29 +400,20 @@ export function MonthGrid({
                         <div
                           key={b.id + cellKey}
                           className={cn(
-                            "event-tile relative group/m-event flex items-center gap-1 w-full text-left text-[10px] leading-snug rounded-md px-1.5 py-0.5 text-white",
+                            "event-tile relative group/m-event flex items-center gap-1 w-full text-left text-[10px] leading-snug rounded-md px-1.5 py-0.5 text-white touch-none select-none",
                             writable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
                             completed && "opacity-60",
                             writable && !taskTile && "pr-4",
+                            movingId === b.id && "opacity-50 ring-2 ring-white/60 pointer-events-none",
                           )}
                           style={{ backgroundColor: muteColor(b.color) }}
                           title={`${b.title}\n${format(new Date(b.start), "p")} – ${format(new Date(b.end), "p")}`}
-                          draggable={writable}
-                          onDragStart={(e) => {
-                            if (!writable) return;
-                            e.dataTransfer.setData("text/plain", b.id);
-                            e.dataTransfer.effectAllowed = "move";
-                            draggingId.current = b.id;
-                          }}
-                          onDragEnd={() => {
-                            draggingId.current = null;
-                            setHoverDayKey(null);
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // ignore clicks that happened mid-drag
-                            if (draggingId.current === b.id) return;
-                            openEdit(b);
+                          onPointerDown={(e) => {
+                            // Skip when starting on the checkbox or delete X — those have
+                            // their own onClick and shouldn't initiate a drag.
+                            const t = e.target as HTMLElement;
+                            if (t.closest("[role=checkbox]") || t.closest("[role=button]")) return;
+                            onTilePointerDown(e, b.id, writable);
                           }}
                         >
                           {taskTile && (
