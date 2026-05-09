@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { spawn } from "node:child_process";
 import { addDays } from "date-fns";
 import { db } from "@/lib/db";
+import { TOOLS as ALL_TOOLS, runTool, type AppliedEntry } from "./tools";
 
 const SONNET_MODEL = "claude-sonnet-4-6";
 const HAIKU_MODEL = "claude-haiku-4-5";
@@ -62,12 +63,19 @@ export type ToolUse =
 
 export type AssistantTurn = {
   text: string;
+  // New shape: server-side execution returns the changes that were applied,
+  // not proposals to confirm. The chat panel renders these as a colored
+  // summary and registers undo entries from the snapshot data.
+  applied: AppliedEntry[];
+  // Legacy shape kept for the CLI backend which still emits client-side
+  // proposals — empty when using the API backend.
   proposals: ToolUse[];
 };
 
 type RawTurn = {
   text: string;
   proposals: ToolUse[];
+  applied: AppliedEntry[];
   ruleSaves: { text: string; priority: number }[];
   hourUpdates: { start: string; end: string }[];
 };
@@ -249,38 +257,53 @@ function calendarsBlock(calendars: Cal[]): string {
 // after the first call (ephemeral cache TTL = 5 min). No dates, no events,
 // no rules — those go in the dynamic block below.
 const STATIC_PROMPT = [
-  `You are a scheduling assistant inside a unified calendar app.`,
+  `You are a scheduling assistant inside a unified calendar app. Every tool call you make is EXECUTED IMMEDIATELY — no user confirmation step. The user trusts you and ⌘Z reverses anything.`,
+  ``,
+  `Read tools (call these BEFORE acting when info is missing):`,
+  `- describe_availability(days?) — returns free time slots day-by-day with insideWorkHours flags. Use before any "find me time for X" or "what can I do today" ask.`,
+  `- find_events(query, days?) — fuzzy search by title substring. Use BEFORE bulk ops to ensure you have every matching id (don't trust the upcoming-events list to be exhaustive past its window).`,
+  `- list_categories — every category id+name+color+section. Use to resolve "the AI Development calendar" → calendar id.`,
+  ``,
+  `Action tools (mutate; each call is final):`,
+  `- propose_event — create one event. Pass calendarId or newCategoryName. Use rrule for recurring (FREQ=WEEKLY;BYDAY=SA;UNTIL=YYYYMMDDT235959Z).`,
+  `- propose_update_event — change ANY field of an existing event (newTitle, newStart+newEnd, newCalendarId, newCategoryName, newNotes, newRrule, newAllDay). One call per event. Replaces the older propose_reschedule + propose_change_category.`,
+  `- propose_delete — remove an event. For "every Saturday X" / "all my Y": pass the MASTER id (cascades to all instances).`,
+  `- propose_split_event — break an event into N pieces with optional gaps.`,
+  `- propose_clone_event — duplicate an event at a new start time.`,
+  `- propose_create_category — make a new category with no event attached.`,
+  `- propose_update_category — rename/recolor a category.`,
+  `- propose_delete_category — wipe a category and all its events (destructive — only when explicit).`,
+  `- propose_archive_completed — confirm archive of completed tasks.`,
+  `- save_rule — persist a stated preference.`,
+  `- update_working_hours — change the workday window.`,
   ``,
   `Week convention:`,
   `- Weeks run SUNDAY → SATURDAY.`,
-  `- "this week" / "rest of the week" = today through the upcoming Saturday inclusive.`,
-  `- "next week" = the following Sunday → Saturday.`,
+  `- "this week" = today through Saturday inclusive. "next week" = the following Sun→Sat.`,
   ``,
-  `Conventions:`,
+  `General conventions:`,
   `- Reason about times in the user's LOCAL timezone. Emit ISO-8601 with offset or UTC Z; the UI displays locally.`,
-  `- NEVER propose a time that overlaps any existing event listed in the dynamic block. Treat listed events as immovable unless the user explicitly says reschedule them.`,
+  `- NEVER propose a time that overlaps any existing event listed in the dynamic block (or that describe_availability shows as busy). Treat listed events as immovable unless the user explicitly says reschedule them.`,
   `- Respect active rules. Surface conflicts instead of silently violating them.`,
-  `- Routine/habit-style asks (stretching, reading, gym, etc.) → use a TASK category. Reuse one if a name substring matches; otherwise propose_event with newCategoryName + newCategoryColor.`,
-  `- When auto-creating a category, name it after the SUBJECT (e.g. "SHAI Research"). Don't copy read-only calendar names.`,
-  `- Meeting/appointment with specific people → use a SCHEDULING calendar that isn't in the DO NOT USE list. Fall back to a task category if none fits.`,
+  `- Routine/habit-style asks (stretching, reading, gym) → use or auto-create a TASK category.`,
+  `- Auto-created category names follow the SUBJECT (e.g. "Stretching"). Don't copy read-only calendar names.`,
+  `- Meeting/appointment with specific people → use a writable SCHEDULING calendar (not in DO NOT USE).`,
   `- Never propose events on DO NOT USE calendars.`,
-  `- "every weekday at 7am" → ONE propose_event with rrule (FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR, etc.).`,
-  `- "slot N hours" → emit one or more propose_event calls; each is independent.`,
-  `- "during the week when I don't work" = OUTSIDE working hours OR weekend. Weekday evenings (after workdayEnd) are the safest default.`,
-  `- "during work" = INSIDE working hours.`,
-  `- Slotting: scan the dynamic events list for contiguous gaps of the right length. Never overlap.`,
-  `- "Clear my schedule until X / I'm doing Y instead, move my stuff": (a) propose_event for the new activity over the requested span, AND (b) propose_reschedule each displaced event into the next reasonable free slot. Don't silently drop.`,
-  `- "What can I do today since X is cancelled" / "maximize my week": pull 2–4 upcoming items forward and offer propose_reschedule for the ones that should move.`,
-  `- Single-event remove ("take out X") → propose_delete with the eventId.`,
-  `- "Every Saturday X" / "all my X" → propose_delete the MASTER id from the recurring-series block (cascades).`,
-  `- "Change all X to category Y" → ONE propose_change_category per matching event including any recurring master.`,
-  `- "Rename all X to Z" / "change all X titles to Z" → ONE propose_change_category per matching event with newTitle=Z. You can rename + recategorize in the same call by passing both newTitle AND newCalendarId/newCategoryName.`,
-  `- "Remove the (number) suffix from all X" → for each matching event emit propose_change_category with newTitle = the cleaned-up title (e.g. "Short Form Content (4)" → newTitle="Short Form Content"). Don't drop these — process EVERY match.`,
-  `- For compound asks ("change all A and add B and remove C"), enumerate every event for every clause. Don't stop early to be brief — completeness matters more than terseness.`,
-  `- Compound "remove X and add Y" → emit BOTH propose_delete AND propose_event.`,
+  `- "every weekday at 7am" → ONE propose_event with rrule (FREQ=DAILY or FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR).`,
+  `- "every Saturday in May 8-10pm" → ONE propose_event with rrule FREQ=WEEKLY;BYDAY=SA;UNTIL=20260531T235959Z. NOT 4 separate non-recurring events.`,
+  `- "slot N hours" → call describe_availability first, then emit propose_event into the picked slot(s).`,
+  `- "during the week when I don't work" = OUTSIDE working hours OR weekend. Weekday evenings after workdayEnd are the safest default.`,
+  `- "Clear my schedule until X / I'm doing Y instead": (a) propose_event for the new activity over the requested span, AND (b) call find_events for the displaced events, then propose_update_event each one to a free slot from describe_availability. Don't silently drop.`,
+  `- "What can I do today since X is cancelled" / "maximize my week": call describe_availability for today + find_events for upcoming priorities, propose 2–4 specific propose_update_event calls to pull items forward.`,
+  `- Single-event remove ("take out X") → propose_delete.`,
+  `- "Every Saturday X" / "all my X" → propose_delete on the recurring MASTER id (cascades).`,
+  `- "Change all X to category Y" → call find_events first if needed, then ONE propose_update_event per matching event (recurring master + each non-recurring instance). Set newCalendarId or newCategoryName + newCategoryColor.`,
+  `- "Rename all X to Z" → ONE propose_update_event per match with newTitle=Z. Combine with newCalendarId in the same call when the user says rename AND recategorize.`,
+  `- "Remove the (number) suffix from all X" → propose_update_event with newTitle = cleaned-up title for EVERY match.`,
+  `- For compound asks ("change A and add B and remove C"), enumerate every event for every clause. Completeness > brevity.`,
   `- When the user names a weekday, use the exact date from the day-of-week block. Don't guess.`,
-  `- Be concise. Propose slots rather than asking questions when info is sufficient.`,
-  `- When the user states a new preference ("from now on…"), save_rule.`,
+  `- Be concise in your text response — the summary card already shows what changed.`,
+  `- When the user states a new preference ("from now on…", "always…"), save_rule.`,
   ``,
   `Color hints when auto-creating categories:`,
   `- Fitness/movement → #22c55e or #84cc16`,
@@ -338,115 +361,9 @@ async function loadHistory(): Promise<{ role: "user" | "assistant"; content: str
   return msgs;
 }
 
-// ── API backend (uses ANTHROPIC_API_KEY) ────────────────────────────────────
+// ── API backend: agentic loop with server-side tool execution ──────────────
 
-const TOOLS: Anthropic.Tool[] = [
-  {
-    name: "propose_event",
-    description:
-      "Suggest a new event for the user to confirm. Does NOT create directly. " +
-      "Provide EITHER calendarId (existing) OR newCategoryName (auto-create task category on confirm). " +
-      "Use rrule (e.g. FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR) for recurring habits.",
-    input_schema: {
-      type: "object",
-      properties: {
-        title: { type: "string" },
-        start: { type: "string" },
-        end: { type: "string" },
-        calendarId: { type: "string", description: "Existing calendar id" },
-        newCategoryName: {
-          type: "string",
-          description: "Name of a NEW task category to create instead of using an existing calendar",
-        },
-        newCategoryColor: {
-          type: "string",
-          description: "Hex color for the new category (e.g. '#22c55e')",
-        },
-        allDay: { type: "boolean" },
-        rrule: { type: "string" },
-        notes: { type: "string" },
-        reasoning: { type: "string" },
-      },
-      required: ["title", "start", "end"],
-    },
-  },
-  {
-    name: "propose_reschedule",
-    description: "Suggest moving an existing event. Does NOT move directly.",
-    input_schema: {
-      type: "object",
-      properties: {
-        eventId: { type: "string" },
-        newStart: { type: "string" },
-        newEnd: { type: "string" },
-        reasoning: { type: "string" },
-      },
-      required: ["eventId", "newStart", "newEnd"],
-    },
-  },
-  {
-    name: "propose_delete",
-    description:
-      "Suggest deleting an existing event. Use when the user asks to take out, remove, " +
-      "cancel, or get rid of an event. The eventId must come from the events list or " +
-      "the recurring-series block. For 'every Saturday X' style asks, pass the recurring " +
-      "MASTER id — that drops the whole series in one shot. Pass the title verbatim.",
-    input_schema: {
-      type: "object",
-      properties: {
-        eventId: { type: "string" },
-        title: { type: "string" },
-        reasoning: { type: "string" },
-      },
-      required: ["eventId", "title"],
-    },
-  },
-  {
-    name: "propose_change_category",
-    description:
-      "Update an existing local event's category and/or title. Use for: 'move X to Y', " +
-      "'change all X to Y', 'recategorize X', 'rename X to Z'. You can pass newTitle alone " +
-      "(rename only), newCalendarId/newCategoryName alone (recategorize only), or both. " +
-      "For 'all X events', emit ONE tool call per matching event including any recurring master.",
-    input_schema: {
-      type: "object",
-      properties: {
-        eventId: { type: "string" },
-        title: { type: "string", description: "Current title (for confirmation display)" },
-        newCalendarId: { type: "string" },
-        newCategoryName: { type: "string" },
-        newCategoryColor: { type: "string" },
-        newTitle: { type: "string", description: "New title — use this to rename the event" },
-        reasoning: { type: "string" },
-      },
-      required: ["eventId", "title"],
-    },
-  },
-  {
-    name: "save_rule",
-    description: "Persist a new scheduling rule.",
-    input_schema: {
-      type: "object",
-      properties: {
-        text: { type: "string" },
-        priority: { type: "integer" },
-      },
-      required: ["text"],
-    },
-  },
-  {
-    name: "update_working_hours",
-    description: "Update the default working-hours window.",
-    input_schema: {
-      type: "object",
-      properties: {
-        start: { type: "string" },
-        end: { type: "string" },
-      },
-      required: ["start", "end"],
-    },
-  },
-];
+const MAX_LOOP_ITERATIONS = 6;
 
 async function backendApi(
   staticSys: string,
@@ -463,46 +380,84 @@ async function backendApi(
     { role: "user", content: userMessage },
   ];
 
-  const model = pickModel(userMessage);
-  // Two cache breakpoints. The static block is identical across every turn
-  // (and across model switches because we pass the SAME static text), so the
-  // first 2-3K tokens of the prompt cache-hit ~always within the 5min TTL.
-  // The dynamic block changes per turn (current time, events) but still
-  // benefits from caching on quick retries.
-  // Bulk ops can fan out to many tool calls (12 events × ~80 output tokens each
-  // ≈ 1000 tokens just for tool_use blocks). 2048 keeps headroom without
-  // meaningfully increasing cost since output is billed per actual token used.
-  const res = await client.messages.create({
-    model,
-    max_tokens: 2048,
-    system: [
-      { type: "text", text: staticSys, cache_control: { type: "ephemeral" } },
-      { type: "text", text: dynamicSys, cache_control: { type: "ephemeral" } },
-    ],
-    tools: TOOLS,
-    messages,
-  });
+  const turn: RawTurn = {
+    text: "",
+    proposals: [],
+    applied: [],
+    ruleSaves: [],
+    hourUpdates: [],
+  };
 
-  const turn: RawTurn = { text: "", proposals: [], ruleSaves: [], hourUpdates: [] };
-  for (const block of res.content) {
-    if (block.type === "text") turn.text += block.text;
-    else if (block.type === "tool_use") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const input = block.input as any;
-      if (block.name === "propose_event") {
-        turn.proposals.push({ type: "propose_event", ...input });
-      } else if (block.name === "propose_reschedule") {
-        turn.proposals.push({ type: "propose_reschedule", ...input });
-      } else if (block.name === "propose_delete") {
-        turn.proposals.push({ type: "propose_delete", ...input });
-      } else if (block.name === "propose_change_category") {
-        turn.proposals.push({ type: "propose_change_category", ...input });
-      } else if (block.name === "save_rule") {
-        turn.ruleSaves.push({ text: input.text, priority: Number(input.priority ?? 50) });
-      } else if (block.name === "update_working_hours") {
-        turn.hourUpdates.push({ start: input.start, end: input.end });
-      }
+  // The model picks read tools (describe_availability, find_events, etc.) and
+  // mutation tools (propose_event, propose_update_event, etc.). We loop until
+  // it stops asking for tool calls — at most MAX_LOOP_ITERATIONS to bound cost.
+  // First model pick happens once based on the user message; subsequent
+  // iterations re-use the same model so cache stays warm.
+  const model = pickModel(userMessage);
+
+  for (let iter = 0; iter < MAX_LOOP_ITERATIONS; iter++) {
+    const res = await client.messages.create({
+      model,
+      max_tokens: 2048,
+      system: [
+        { type: "text", text: staticSys, cache_control: { type: "ephemeral" } },
+        { type: "text", text: dynamicSys, cache_control: { type: "ephemeral" } },
+      ],
+      tools: ALL_TOOLS,
+      messages,
+    });
+
+    // Collect text from this turn (may be partial on tool_use turns).
+    for (const block of res.content) {
+      if (block.type === "text") turn.text += block.text;
     }
+
+    const toolUses = res.content.filter((b) => b.type === "tool_use") as Array<
+      Extract<(typeof res.content)[number], { type: "tool_use" }>
+    >;
+
+    if (toolUses.length === 0 || res.stop_reason !== "tool_use") {
+      // No more tools — the model is done.
+      return turn;
+    }
+
+    // Echo the assistant's full response back into messages so the next
+    // request includes the tool_use blocks that the tool_results refer to.
+    messages.push({ role: "assistant", content: res.content });
+
+    // Run each tool, collect tool_results to feed back as the next user turn.
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const tu of toolUses) {
+      const result = await runTool(tu.name, tu.input);
+      if (result.applied) turn.applied.push(result.applied);
+      // Mirror rule saves / hour updates into the legacy fields too so
+      // chat() can still surface them in the assistant's text suffix.
+      if (result.applied?.kind === "rule_saved") {
+        turn.ruleSaves.push({
+          text: result.applied.text,
+          priority: result.applied.priority,
+        });
+      }
+      if (result.applied?.kind === "working_hours_updated") {
+        turn.hourUpdates.push({
+          start: result.applied.newStart,
+          end: result.applied.newEnd,
+        });
+      }
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: tu.id,
+        content: JSON.stringify(result.toolResult),
+        is_error: Boolean(result.error),
+      });
+    }
+
+    messages.push({ role: "user", content: toolResults });
+  }
+
+  // Hit the iteration cap — return what we have, with a note in the text.
+  if (turn.text.trim().length === 0) {
+    turn.text = "(stopped after the maximum tool-call loop — re-prompt if more is needed)";
   }
   return turn;
 }
@@ -647,7 +602,7 @@ async function backendCli(
   }
   if (!parsed) throw new Error("claude CLI returned no structured output");
 
-  const turn: RawTurn = { text: parsed.text ?? "", proposals: [], ruleSaves: [], hourUpdates: [] };
+  const turn: RawTurn = { text: parsed.text ?? "", proposals: [], applied: [], ruleSaves: [], hourUpdates: [] };
   for (const action of parsed.actions ?? []) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const a = action as any;
@@ -720,31 +675,43 @@ export async function chat(userMessage: string): Promise<AssistantTurn> {
     throw err;
   }
 
-  // Apply side effects
+  // The API backend already applied rule saves / hour updates via its tool
+  // executors. The CLI backend still surfaces them in ruleSaves/hourUpdates,
+  // so apply those for back-compat. (The CLI path doesn't use the agentic
+  // loop and returns proposals to the client to apply.)
   let extra = "";
-  for (const r of turn.ruleSaves) {
-    await db.rule.create({ data: { text: r.text, priority: r.priority } });
-    extra += `\n\n_Saved rule: "${r.text}"._`;
-  }
-  for (const h of turn.hourUpdates) {
-    await db.settings.upsert({
-      where: { id: "settings" },
-      create: { id: "settings", workdayStart: h.start, workdayEnd: h.end },
-      update: { workdayStart: h.start, workdayEnd: h.end },
-    });
-    extra += `\n\n_Working hours set to ${h.start}–${h.end}._`;
+  if (backend === "cli") {
+    for (const r of turn.ruleSaves) {
+      await db.rule.create({ data: { text: r.text, priority: r.priority } });
+      extra += `\n\n_Saved rule: "${r.text}"._`;
+    }
+    for (const h of turn.hourUpdates) {
+      await db.settings.upsert({
+        where: { id: "settings" },
+        create: { id: "settings", workdayStart: h.start, workdayEnd: h.end },
+        update: { workdayStart: h.start, workdayEnd: h.end },
+      });
+      extra += `\n\n_Working hours set to ${h.start}–${h.end}._`;
+    }
   }
 
-  const finalText = (turn.text + extra).trim() || (turn.proposals.length ? "(proposed a slot)" : "");
+  const fallbackText =
+    turn.applied.length > 0 ? "(done — see summary)" : turn.proposals.length ? "(proposed a slot)" : "";
+  const finalText = (turn.text + extra).trim() || fallbackText;
   await db.chatMessage.create({
     data: {
       role: "assistant",
       content: finalText,
-      toolCalls: turn.proposals.length ? JSON.stringify(turn.proposals) : null,
+      toolCalls:
+        turn.applied.length > 0
+          ? JSON.stringify(turn.applied)
+          : turn.proposals.length
+            ? JSON.stringify(turn.proposals)
+            : null,
     },
   });
 
-  return { text: finalText, proposals: turn.proposals };
+  return { text: finalText, applied: turn.applied, proposals: turn.proposals };
 }
 
 export async function reset() {

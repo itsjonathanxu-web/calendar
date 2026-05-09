@@ -47,17 +47,36 @@ function matchesGoal(ev: EventRow, goal: Goal): boolean {
   return false;
 }
 
-function progressFor(goal: Goal, events: EventRow[], days: Date[]) {
-  const matched = events.filter((e) => matchesGoal(e, goal));
+// Day key (YYYY-MM-DD) in the user's timezone — so a Saturday 8pm EDT event
+// (UTC = Sun 00:00) is correctly attributed to Saturday's count, not pushed
+// into Sunday by the server's UTC clock.
+function localDayKey(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function progressFor(goal: Goal, events: EventRow[], days: Date[], tz: string) {
+  // Restrict to events that fall on one of the visible user-local week days.
+  // The fetch was buffered ±1 day to catch UTC-boundary events, so we filter
+  // here to avoid counting neighboring-week leakage.
+  const weekKeys = new Set(days.map((d) => localDayKey(d, tz)));
+  const matched = events.filter(
+    (e) => matchesGoal(e, goal) && weekKeys.has(localDayKey(e.start, tz)),
+  );
   if (goal.mode === "hours") {
     const totalMs = matched.reduce((sum, e) => sum + (e.end.getTime() - e.start.getTime()), 0);
     const hours = totalMs / 3600_000;
     return { value: hours, label: `${hours.toFixed(1)} / ${goal.target} hr` };
   }
   if (goal.mode === "daily") {
-    const daysWithMatch = days.filter((d) =>
-      matched.some((e) => e.start.toDateString() === d.toDateString()),
-    ).length;
+    const daysWithMatch = days.filter((d) => {
+      const k = localDayKey(d, tz);
+      return matched.some((e) => localDayKey(e.start, tz) === k);
+    }).length;
     const target = goal.target > 0 ? goal.target : days.length;
     return { value: daysWithMatch, label: `${daysWithMatch} / ${target} days` };
   }
@@ -84,14 +103,23 @@ export default async function ProgressPage() {
   });
   const dayOnlyCalIds = dayOnlyCalRows.map((c) => c.id);
 
+  const settings = await db.settings.findUnique({ where: { id: "settings" } });
+  const tz = settings?.timezone ?? "America/Toronto";
+
   const [goals, events, calendars, todayEvents] = await Promise.all([
     db.progressGoal.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     }) as unknown as Promise<Goal[]>,
+    // Same ±1 day buffer as the calendar page: events whose UTC start sits
+    // exactly on the week boundary (Saturday-evening EDT → Sunday 00:00 UTC)
+    // were being excluded by `start < end` and never counted toward goals.
     db.event.findMany({
       where: {
-        AND: [{ start: { lt: end } }, { end: { gt: start } }],
+        AND: [
+          { start: { lt: new Date(end.getTime() + 86400_000) } },
+          { end: { gt: new Date(start.getTime() - 86400_000) } },
+        ],
         calendar: { enabled: true },
         calendarId: { notIn: dayOnlyCalIds },
       },
@@ -206,14 +234,15 @@ export default async function ProgressPage() {
             </div>
           )}
           {goals.map((g) => {
-            const { value, label } = progressFor(g, events, days);
+            const { value, label } = progressFor(g, events, days, tz);
             const target = g.mode === "daily" ? (g.target > 0 ? g.target : 7) : g.target;
             const pct = Math.min(100, Math.round((value / target) * 100));
-            const dayCounts = days.map((d) =>
-              events.filter(
-                (e) => matchesGoal(e, g) && e.start.toDateString() === d.toDateString(),
-              ).length,
-            );
+            const dayCounts = days.map((d) => {
+              const dayKey = localDayKey(d, tz);
+              return events.filter(
+                (e) => matchesGoal(e, g) && localDayKey(e.start, tz) === dayKey,
+              ).length;
+            });
             const max = Math.max(1, ...dayCounts);
             return (
               <div key={g.id} className="glass rounded-xl px-4 py-3 space-y-2">
