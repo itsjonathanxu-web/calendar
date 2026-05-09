@@ -2,6 +2,7 @@ import { startOfWeek, endOfWeek, startOfDay, endOfDay, addDays, format } from "d
 import { db } from "@/lib/db";
 import { ProgressEditor } from "./ProgressEditor";
 import { TodayPanel, type TodayItem } from "./TodayPanel";
+import { TodayDateLabel } from "./TodayDateLabel";
 
 // Marker stored in Calendar.config so the rest of the app can recognize the
 // hidden "Just for today" calendar. Events here only render in the Today
@@ -178,7 +179,7 @@ export default async function ProgressPage() {
       <header>
         <h1 className="text-lg font-semibold tracking-tight">Progress</h1>
         <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-          {format(now, "EEEE, MMM d")} · week of {format(start, "MMM d")}–{format(end, "MMM d")}
+          <TodayDateLabel />
         </p>
       </header>
 

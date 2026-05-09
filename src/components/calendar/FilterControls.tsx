@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronUp, ChevronDown, Pencil, X } from "lucide-react";
+import { Pencil, X, GripVertical } from "lucide-react";
 import { AddTaskCategoryButton } from "./AddTaskCategoryButton";
 import { TaskModeToggle } from "./TaskModeToggle";
 import { useDeviceFilter } from "@/lib/use-device-filter";
+import { useReorderDrag } from "@/lib/use-reorder-drag";
 
 const SOURCE_LABELS: Record<string, string> = {
   google: "Google",
@@ -35,8 +36,27 @@ export function FilterControls({
   calendars: CalRow[];
   initialDisabled: string[];
 }) {
+  const router = useRouter();
   const { isEnabled, toggle } = useDeviceFilter(initialDisabled);
   const [editing, setEditing] = useState<CalRow | null>(null);
+
+  // Drag-to-reorder: emit a definitive [idx*10] sortOrder for every row in the
+  // group after a drop so spacings stay clean even after many reorders.
+  async function reorderGroup(group: CalRow[], from: number, to: number) {
+    const next = group.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    await Promise.all(
+      next.map((c, i) =>
+        fetch("/api/calendars/update", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: c.id, sortOrder: i * 10 }),
+        }),
+      ),
+    );
+    router.refresh();
+  }
 
   const scheduling = calendars
     .filter((c) => c.section === "scheduling")
@@ -64,33 +84,25 @@ export function FilterControls({
       </div>
 
       <Section title="Scheduling" right={<AddTaskCategoryButton defaultSection="scheduling" />}>
-        {localScheduling.map((c, i) => (
-          <CalendarRow
-            key={c.id}
-            c={c}
-            group={localScheduling}
-            index={i}
-            enabled={isEnabled(c.id)}
-            onToggle={() => toggle(c.id)}
-            onEdit={() => setEditing(c)}
-          />
-        ))}
+        <ReorderableList
+          group={localScheduling}
+          isEnabled={isEnabled}
+          onToggle={toggle}
+          onEdit={(c) => setEditing(c)}
+          onDrop={(from, to) => reorderGroup(localScheduling, from, to)}
+        />
         {Array.from(googleGroups.entries()).map(([label, cals]) => (
           <div key={label} className="space-y-0.5">
             <div className="px-2 pb-0.5 pt-3 text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]/70">
               {SOURCE_LABELS.google} · {label}
             </div>
-            {cals.map((c, i) => (
-              <CalendarRow
-                key={c.id}
-                c={c}
-                group={cals}
-                index={i}
-                enabled={isEnabled(c.id)}
-                onToggle={() => toggle(c.id)}
-                onEdit={() => setEditing(c)}
-              />
-            ))}
+            <ReorderableList
+              group={cals}
+              isEnabled={isEnabled}
+              onToggle={toggle}
+              onEdit={(c) => setEditing(c)}
+              onDrop={(from, to) => reorderGroup(cals, from, to)}
+            />
           </div>
         ))}
         {scheduling.length === 0 && (
@@ -106,17 +118,13 @@ export function FilterControls({
             No task categories yet.
           </div>
         )}
-        {tasks.map((c, i) => (
-          <CalendarRow
-            key={c.id}
-            c={c}
-            group={tasks}
-            index={i}
-            enabled={isEnabled(c.id)}
-            onToggle={() => toggle(c.id)}
-            onEdit={() => setEditing(c)}
-          />
-        ))}
+        <ReorderableList
+          group={tasks}
+          isEnabled={isEnabled}
+          onToggle={toggle}
+          onEdit={(c) => setEditing(c)}
+          onDrop={(from, to) => reorderGroup(tasks, from, to)}
+        />
       </Section>
 
       {editing && (
@@ -151,66 +159,78 @@ function Section({
   );
 }
 
+function ReorderableList({
+  group,
+  isEnabled,
+  onToggle,
+  onEdit,
+  onDrop,
+}: {
+  group: CalRow[];
+  isEnabled: (id: string) => boolean;
+  onToggle: (id: string) => void;
+  onEdit: (c: CalRow) => void;
+  onDrop: (from: number, to: number) => void | Promise<void>;
+}) {
+  const { onPointerDown, draggingIdx, overIdx } = useReorderDrag({ onDrop });
+  return (
+    <div className="space-y-0.5">
+      {group.map((c, i) => (
+        <CalendarRow
+          key={c.id}
+          c={c}
+          index={i}
+          enabled={isEnabled(c.id)}
+          onToggle={() => onToggle(c.id)}
+          onEdit={() => onEdit(c)}
+          onPointerDown={(e) => onPointerDown(e, i)}
+          dragging={draggingIdx === i}
+          dragOver={overIdx === i && draggingIdx !== null && draggingIdx !== i}
+        />
+      ))}
+    </div>
+  );
+}
+
 function CalendarRow({
   c,
-  group,
   index,
   enabled,
   onToggle,
   onEdit,
+  onPointerDown,
+  dragging,
+  dragOver,
 }: {
   c: CalRow;
-  group: CalRow[];
   index: number;
   enabled: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  onPointerDown: (e: React.PointerEvent) => void;
+  dragging: boolean;
+  dragOver: boolean;
 }) {
-  const router = useRouter();
-
-  // Reorder by swapping sortKey with neighbor in the same section group.
-  async function reorder(dir: -1 | 1) {
-    const swapWith = group[index + dir];
-    if (!swapWith) return;
-    const a = c.sortKey;
-    const b = swapWith.sortKey;
-    // Distinct keys → straight swap. Ties (everyone at the default 50) → push c
-    // past swapWith in the requested direction; keep swapWith where it is.
-    // The previous formula used `b - dir` which moved c the wrong way and
-    // made the up/down arrows feel broken.
-    let newA: number;
-    let newB: number;
-    if (a !== b) {
-      newA = b;
-      newB = a;
-    } else {
-      newA = b + dir;
-      newB = b;
-    }
-    await Promise.all([
-      fetch("/api/calendars/update", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: c.id, sortOrder: newA }),
-      }),
-      fetch("/api/calendars/update", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: swapWith.id, sortOrder: newB }),
-      }),
-    ]);
-    router.refresh();
-  }
-
-  const isFirst = index === 0;
-  const isLast = index === group.length - 1;
-
   return (
-    <div className="group/row flex items-center gap-1 pr-1 rounded hover:bg-[var(--color-fg)]/[0.04]">
+    <div
+      data-row-idx={index}
+      onPointerDown={onPointerDown}
+      className={
+        "group/row flex items-center gap-1 pr-1 rounded hover:bg-[var(--color-fg)]/[0.04] touch-none select-none transition-colors " +
+        (dragging ? "opacity-50 ring-1 ring-white/40" : "") +
+        (dragOver ? " bg-white/[0.08]" : "")
+      }
+    >
+      <span
+        aria-hidden
+        className="w-3 h-5 flex items-center justify-center text-[var(--color-fg-muted)]/60 cursor-grab active:cursor-grabbing pl-1"
+      >
+        <GripVertical size={10} />
+      </span>
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-2 flex-1 min-w-0 pl-2 py-1 text-left"
+        className="flex items-center gap-2 flex-1 min-w-0 py-1 text-left"
       >
         <span
           className={
@@ -229,26 +249,6 @@ function CalendarRow({
         </span>
       </button>
       <div className="opacity-0 group-hover/row:opacity-100 transition-opacity flex items-center">
-        <button
-          type="button"
-          onClick={() => reorder(-1)}
-          disabled={isFirst}
-          aria-label="Move up"
-          title="Move up"
-          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06] disabled:opacity-30 disabled:hover:bg-transparent"
-        >
-          <ChevronUp size={12} />
-        </button>
-        <button
-          type="button"
-          onClick={() => reorder(1)}
-          disabled={isLast}
-          aria-label="Move down"
-          title="Move down"
-          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06] disabled:opacity-30 disabled:hover:bg-transparent"
-        >
-          <ChevronDown size={12} />
-        </button>
         <button
           type="button"
           onClick={onEdit}

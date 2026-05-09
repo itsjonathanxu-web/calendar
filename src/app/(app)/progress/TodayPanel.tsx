@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, X, ChevronUp, ChevronDown, Trash2 } from "lucide-react";
+import { Plus, X, Trash2, GripVertical } from "lucide-react";
+import { useReorderDrag } from "@/lib/use-reorder-drag";
 
 // Server passes ISO strings — Date objects formatted on server use the
 // container's TZ (UTC on Fly), which made every time on the Today panel
@@ -67,24 +68,28 @@ export function TodayPanel({
       <h2 className="text-xs uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Today</h2>
 
       <ItemCard title="Schedule">
-        {schedule.length === 0 && <Empty msg="Nothing scheduled." />}
-        {schedule.map((e) => (
+        {todaySchedule.length === 0 && <Empty msg="Nothing scheduled." />}
+        {todaySchedule.map((e) => (
           <Row key={e.id} item={e} onPickNotes={setOpenNotes} />
         ))}
       </ItemCard>
 
       <ItemCard
         title="Tasks"
-        right={<span className="text-[10px] text-[var(--color-fg-muted)]">{tasks.length} open</span>}
+        right={
+          <span className="text-[10px] text-[var(--color-fg-muted)]">
+            {todayTasks.length} open
+          </span>
+        }
       >
-        {tasks.length === 0 && <Empty msg="No tasks for today." />}
-        {tasks.map((e) => (
+        {todayTasks.length === 0 && <Empty msg="No tasks for today." />}
+        {todayTasks.map((e) => (
           <Row key={e.id} item={e} onPickNotes={setOpenNotes} />
         ))}
       </ItemCard>
 
       <DayOnlySection
-        items={dayOnly}
+        items={todayDayOnly}
         calendar={dayOnlyCalendar}
         onPickNotes={setOpenNotes}
       />
@@ -211,43 +216,40 @@ function DayOnlySection({
     }
   }
 
-  async function reorder(idx: number, dir: -1 | 1) {
-    const a = items[idx];
-    const b = items[idx + dir];
-    if (!a || !b) return;
+  async function reorder(from: number, to: number) {
+    if (from === to) return;
     setBusy(true);
     try {
-      // Swap their start timestamps so the asc-by-start order reverses for
-      // this pair. End is preserved (24h after each one's start).
-      const aStart = a.start;
-      const bStart = b.start;
-      const aDur = new Date(a.end).getTime() - new Date(a.start).getTime();
-      const bDur = new Date(b.end).getTime() - new Date(b.start).getTime();
-      await Promise.all([
-        fetch("/api/events/update", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            id: a.id,
-            start: bStart,
-            end: new Date(new Date(bStart).getTime() + aDur).toISOString(),
-          }),
+      // Reassign start timestamps so the asc-by-start order matches the new
+      // arrangement. Use today's local midnight + (idx) seconds — preserves
+      // each item's duration (24h all-day fallback otherwise).
+      const next = items.slice();
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      const now = new Date();
+      const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      await Promise.all(
+        next.map((it, i) => {
+          const newStart = new Date(dayStart.getTime() + i * 1000);
+          const dur = new Date(it.end).getTime() - new Date(it.start).getTime();
+          const newEnd = new Date(newStart.getTime() + dur);
+          return fetch("/api/events/update", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              id: it.id,
+              start: newStart.toISOString(),
+              end: newEnd.toISOString(),
+            }),
+          });
         }),
-        fetch("/api/events/update", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            id: b.id,
-            start: aStart,
-            end: new Date(new Date(aStart).getTime() + bDur).toISOString(),
-          }),
-        }),
-      ]);
+      );
       router.refresh();
     } finally {
       setBusy(false);
     }
   }
+  const { onPointerDown, draggingIdx, overIdx } = useReorderDrag({ onDrop: reorder });
 
   return (
     <div className="glass rounded-xl px-4 py-3 space-y-2">
@@ -267,9 +269,11 @@ function DayOnlySection({
         <DayOnlyRow
           key={e.id}
           item={e}
+          index={i}
           onPickNotes={onPickNotes}
-          onUp={i > 0 ? () => reorder(i, -1) : undefined}
-          onDown={i < items.length - 1 ? () => reorder(i, 1) : undefined}
+          onPointerDown={(ev) => onPointerDown(ev, i)}
+          dragging={draggingIdx === i}
+          dragOver={overIdx === i && draggingIdx !== null && draggingIdx !== i}
           onDelete={() => remove(e.id)}
         />
       ))}
@@ -303,20 +307,38 @@ function DayOnlySection({
 
 function DayOnlyRow({
   item,
+  index,
   onPickNotes,
-  onUp,
-  onDown,
+  onPointerDown,
+  dragging,
+  dragOver,
   onDelete,
 }: {
   item: TodayItem;
+  index: number;
   onPickNotes: (i: TodayItem) => void;
-  onUp?: () => void;
-  onDown?: () => void;
+  onPointerDown: (e: React.PointerEvent) => void;
+  dragging: boolean;
+  dragOver: boolean;
   onDelete: () => void;
 }) {
   const hasNotes = (item.notes ?? "").trim().length > 0;
   return (
-    <div className="group/dayrow flex items-center gap-2 text-sm py-0.5 -mx-1 px-1 rounded hover:bg-white/[0.04]">
+    <div
+      data-row-idx={index}
+      onPointerDown={onPointerDown}
+      className={
+        "group/dayrow flex items-center gap-2 text-sm py-0.5 -mx-1 px-1 rounded hover:bg-white/[0.04] touch-none select-none transition-colors " +
+        (dragging ? "opacity-50 ring-1 ring-white/40" : "") +
+        (dragOver ? " bg-white/[0.08]" : "")
+      }
+    >
+      <span
+        aria-hidden
+        className="w-3 h-5 flex items-center justify-center text-[var(--color-fg-muted)]/60 cursor-grab active:cursor-grabbing"
+      >
+        <GripVertical size={10} />
+      </span>
       <span className="w-2 h-2 rounded-full shrink-0 bg-white/40" />
       <button
         onClick={() => hasNotes && onPickNotes(item)}
@@ -328,24 +350,6 @@ function DayOnlyRow({
         {item.title}
       </button>
       <div className="opacity-0 group-hover/dayrow:opacity-100 transition-opacity flex items-center">
-        <button
-          onClick={onUp}
-          disabled={!onUp}
-          aria-label="Move up"
-          title="Move up"
-          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06] disabled:opacity-30 disabled:hover:bg-transparent"
-        >
-          <ChevronUp size={12} />
-        </button>
-        <button
-          onClick={onDown}
-          disabled={!onDown}
-          aria-label="Move down"
-          title="Move down"
-          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-white/[0.06] disabled:opacity-30 disabled:hover:bg-transparent"
-        >
-          <ChevronDown size={12} />
-        </button>
         <button
           onClick={onDelete}
           aria-label="Delete"
