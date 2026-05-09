@@ -29,6 +29,7 @@ type UpdateEventOp = {
   allDay?: boolean;
   rrule?: string | null;
   notes?: string | null;
+  calendarId?: string;
 };
 
 type DeleteEventOp = { op: "delete_event"; id: string };
@@ -128,6 +129,7 @@ export async function POST(request: Request) {
           if (op.allDay !== undefined) data.allDay = op.allDay;
           if (op.rrule !== undefined) data.rrule = op.rrule;
           if (op.notes !== undefined) data.notes = op.notes;
+          if (op.calendarId) data.calendarId = op.calendarId;
           const ev = await db.event.update({ where: { id: op.id }, data });
           results.push({ ok: true, result: { id: ev.id } });
           break;
