@@ -54,11 +54,20 @@ export default async function CalendarPage({
   });
   const dayOnlyCalIds = dayOnlyCalRows.map((c) => c.id);
 
+  // Server is UTC. The user's local Saturday-evening events get a UTC start
+  // of Sunday-00:00, which is *exactly* the week boundary — `start < end`
+  // excludes them and the event vanishes from week view even though it
+  // visibly belongs to that week's Saturday column. Pad the fetch window
+  // by ±1 day on each side; client-side layoutWeek already filters by
+  // local-TZ overlap, so the extra rows just get dropped harmlessly there.
+  const fetchStart = new Date(start.getTime() - 86400_000);
+  const fetchEnd = new Date(end.getTime() + 86400_000);
+
   // Pull non-recurring events that overlap the window AND any recurring masters
   // (their start may be earlier than the window — we expand them below).
   const nonRecurring = await db.event.findMany({
     where: {
-      AND: [{ start: { lt: end } }, { end: { gt: start } }],
+      AND: [{ start: { lt: fetchEnd } }, { end: { gt: fetchStart } }],
       rrule: null,
       recurrenceParentId: null,
       calendarId: { notIn: dayOnlyCalIds },
@@ -78,7 +87,7 @@ export default async function CalendarPage({
 
   const overrides = await db.event.findMany({
     where: {
-      AND: [{ start: { lt: end } }, { end: { gt: start } }],
+      AND: [{ start: { lt: fetchEnd } }, { end: { gt: fetchStart } }],
       recurrenceParentId: { not: null },
       calendarId: { notIn: dayOnlyCalIds },
     },
@@ -95,7 +104,7 @@ export default async function CalendarPage({
   for (const master of masters) {
     if (!master.rrule) continue;
     const dur = master.end.getTime() - master.start.getTime();
-    const occurrences = expandRRule(master.start, master.rrule, start, end);
+    const occurrences = expandRRule(master.start, master.rrule, fetchStart, fetchEnd);
     for (const occ of occurrences) {
       if (overrideKeys.has(`${master.id}::${occ.toISOString()}`)) continue;
       // Synthesize an EventLike row keeping the master's metadata but with the new start/end + virtual id

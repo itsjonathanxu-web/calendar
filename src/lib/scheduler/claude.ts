@@ -56,6 +56,7 @@ export type ToolUse =
       newCalendarId?: string;
       newCategoryName?: string;
       newCategoryColor?: string;
+      newTitle?: string;
       reasoning?: string;
     };
 
@@ -273,6 +274,9 @@ const STATIC_PROMPT = [
   `- Single-event remove ("take out X") → propose_delete with the eventId.`,
   `- "Every Saturday X" / "all my X" → propose_delete the MASTER id from the recurring-series block (cascades).`,
   `- "Change all X to category Y" → ONE propose_change_category per matching event including any recurring master.`,
+  `- "Rename all X to Z" / "change all X titles to Z" → ONE propose_change_category per matching event with newTitle=Z. You can rename + recategorize in the same call by passing both newTitle AND newCalendarId/newCategoryName.`,
+  `- "Remove the (number) suffix from all X" → for each matching event emit propose_change_category with newTitle = the cleaned-up title (e.g. "Short Form Content (4)" → newTitle="Short Form Content"). Don't drop these — process EVERY match.`,
+  `- For compound asks ("change all A and add B and remove C"), enumerate every event for every clause. Don't stop early to be brief — completeness matters more than terseness.`,
   `- Compound "remove X and add Y" → emit BOTH propose_delete AND propose_event.`,
   `- When the user names a weekday, use the exact date from the day-of-week block. Don't guess.`,
   `- Be concise. Propose slots rather than asking questions when info is sufficient.`,
@@ -400,18 +404,19 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "propose_change_category",
     description:
-      "Suggest changing the calendar/category of an existing local event. Use this when the user " +
-      "says 'move X to category Y', 'change all X to Y', or 'recategorize X'. Pass either " +
-      "newCalendarId (an existing calendar id) OR newCategoryName (to auto-create on confirm). " +
-      "For 'all X events', emit one tool call per matching event including any recurring master.",
+      "Update an existing local event's category and/or title. Use for: 'move X to Y', " +
+      "'change all X to Y', 'recategorize X', 'rename X to Z'. You can pass newTitle alone " +
+      "(rename only), newCalendarId/newCategoryName alone (recategorize only), or both. " +
+      "For 'all X events', emit ONE tool call per matching event including any recurring master.",
     input_schema: {
       type: "object",
       properties: {
         eventId: { type: "string" },
-        title: { type: "string" },
+        title: { type: "string", description: "Current title (for confirmation display)" },
         newCalendarId: { type: "string" },
         newCategoryName: { type: "string" },
         newCategoryColor: { type: "string" },
+        newTitle: { type: "string", description: "New title — use this to rename the event" },
         reasoning: { type: "string" },
       },
       required: ["eventId", "title"],
@@ -464,9 +469,12 @@ async function backendApi(
   // first 2-3K tokens of the prompt cache-hit ~always within the 5min TTL.
   // The dynamic block changes per turn (current time, events) but still
   // benefits from caching on quick retries.
+  // Bulk ops can fan out to many tool calls (12 events × ~80 output tokens each
+  // ≈ 1000 tokens just for tool_use blocks). 2048 keeps headroom without
+  // meaningfully increasing cost since output is billed per actual token used.
   const res = await client.messages.create({
     model,
-    max_tokens: 1024,
+    max_tokens: 2048,
     system: [
       { type: "text", text: staticSys, cache_control: { type: "ephemeral" } },
       { type: "text", text: dynamicSys, cache_control: { type: "ephemeral" } },
@@ -560,6 +568,7 @@ const CLI_SCHEMA = {
               newCalendarId: { type: "string" },
               newCategoryName: { type: "string" },
               newCategoryColor: { type: "string" },
+              newTitle: { type: "string" },
               reasoning: { type: "string" },
             },
             required: ["type", "eventId", "title"],

@@ -41,6 +41,7 @@ type Proposal =
       newCalendarId?: string;
       newCategoryName?: string;
       newCategoryColor?: string;
+      newTitle?: string;
       reasoning?: string;
     };
 
@@ -387,39 +388,41 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
           color: data.calendar.color ?? p.newCategoryColor ?? "#7c7c7c",
         });
       }
-      if (!calendarId) throw new Error("no target calendar");
+      // Either calendar change OR rename is enough — both optional, both supported.
+      if (!calendarId && !p.newTitle) throw new Error("no calendar or new title");
+      const body: Record<string, unknown> = { id: p.eventId, scope: "all" };
+      if (calendarId) body.calendarId = calendarId;
+      if (p.newTitle) body.title = p.newTitle;
       const ur = await fetch("/api/events/update", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: p.eventId, calendarId, scope: "all" }),
+        body: JSON.stringify(body),
       });
       if (!ur.ok) throw new Error((await ur.json().catch(() => ({}))).error ?? "update_failed");
       const fromCal = calMeta(before?.calendarId);
-      const toCal = calMeta(calendarId);
+      const toCal = calMeta(calendarId ?? before?.calendarId);
       pushUndo({
-        label: `Recategorize ${before?.title ?? p.title}`,
+        label: `Update ${before?.title ?? p.title}`,
         undo: async () => {
           if (!before) return;
-          await postJsonOk("/api/events/update", {
-            id: p.eventId,
-            calendarId: before.calendarId,
-            scope: "all",
-          });
+          const undoBody: Record<string, unknown> = { id: p.eventId, scope: "all" };
+          if (calendarId) undoBody.calendarId = before.calendarId;
+          if (p.newTitle) undoBody.title = before.title;
+          await postJsonOk("/api/events/update", undoBody);
           if (createdCategoryId) {
             await postJsonOk("/api/calendars/delete", { id: createdCategoryId });
           }
         },
         redo: async () => {
-          await postJsonOk("/api/events/update", {
-            id: p.eventId,
-            calendarId: calendarId!,
-            scope: "all",
-          });
+          const redoBody: Record<string, unknown> = { id: p.eventId, scope: "all" };
+          if (calendarId) redoBody.calendarId = calendarId;
+          if (p.newTitle) redoBody.title = p.newTitle;
+          await postJsonOk("/api/events/update", redoBody);
         },
       });
       return {
         kind: "recategorized",
-        title: before?.title ?? p.title,
+        title: p.newTitle ?? before?.title ?? p.title,
         fromName: fromCal.name,
         fromColor: fromCal.color,
         toName: toCal.name,
