@@ -12,8 +12,11 @@ const HAIKU_MODEL = "claude-haiku-4-5";
 // mentioned, take the Sonnet path even if the rest of the message is short.
 function pickModel(userMessage: string): string {
   const msg = userMessage.toLowerCase();
+  // Only escalate to Sonnet for genuinely cascade-y intent — multi-event ops,
+  // bulk recategorize, or "clear and reschedule" patterns. Single delete /
+  // single move stays on Haiku (15× cheaper, plenty smart for one event).
   const cascadeRx =
-    /\b(move|reschedule|rearrang|shift|swap|push (back|out|up|over)|fit (it|this|that)?[^.]*\band\b|other (events?|things?|stuff)|delete|remove|cancel|take out|get rid|clear|change all|every|recategoriz|change.{0,30}category|move.{0,30}category)\b/;
+    /\b(all (my )?(events?|tasks?|chinese|claude|workouts?)|every (saturday|sunday|monday|tuesday|wednesday|thursday|friday|weekday|weekend|day|week|other)|rearrang|recategoriz|change all|move all|move every|clear (my )?(schedule|day|today|tomorrow)|fit (around|in)|reschedule|swap|push (back|out|up|over))\b/;
   if (cascadeRx.test(msg)) return SONNET_MODEL;
   return HAIKU_MODEL;
 }
@@ -241,73 +244,90 @@ function calendarsBlock(calendars: Cal[]): string {
   return lines.join("\n");
 }
 
-function systemPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
+// Static block — identical across every turn so the prompt cache hits 100%
+// after the first call (ephemeral cache TTL = 5 min). No dates, no events,
+// no rules — those go in the dynamic block below.
+const STATIC_PROMPT = [
+  `You are a scheduling assistant inside a unified calendar app.`,
+  ``,
+  `Week convention:`,
+  `- Weeks run SUNDAY → SATURDAY.`,
+  `- "this week" / "rest of the week" = today through the upcoming Saturday inclusive.`,
+  `- "next week" = the following Sunday → Saturday.`,
+  ``,
+  `Conventions:`,
+  `- Reason about times in the user's LOCAL timezone. Emit ISO-8601 with offset or UTC Z; the UI displays locally.`,
+  `- NEVER propose a time that overlaps any existing event listed in the dynamic block. Treat listed events as immovable unless the user explicitly says reschedule them.`,
+  `- Respect active rules. Surface conflicts instead of silently violating them.`,
+  `- Routine/habit-style asks (stretching, reading, gym, etc.) → use a TASK category. Reuse one if a name substring matches; otherwise propose_event with newCategoryName + newCategoryColor.`,
+  `- When auto-creating a category, name it after the SUBJECT (e.g. "SHAI Research"). Don't copy read-only calendar names.`,
+  `- Meeting/appointment with specific people → use a SCHEDULING calendar that isn't in the DO NOT USE list. Fall back to a task category if none fits.`,
+  `- Never propose events on DO NOT USE calendars.`,
+  `- "every weekday at 7am" → ONE propose_event with rrule (FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR, etc.).`,
+  `- "slot N hours" → emit one or more propose_event calls; each is independent.`,
+  `- "during the week when I don't work" = OUTSIDE working hours OR weekend. Weekday evenings (after workdayEnd) are the safest default.`,
+  `- "during work" = INSIDE working hours.`,
+  `- Slotting: scan the dynamic events list for contiguous gaps of the right length. Never overlap.`,
+  `- "Clear my schedule until X / I'm doing Y instead, move my stuff": (a) propose_event for the new activity over the requested span, AND (b) propose_reschedule each displaced event into the next reasonable free slot. Don't silently drop.`,
+  `- "What can I do today since X is cancelled" / "maximize my week": pull 2–4 upcoming items forward and offer propose_reschedule for the ones that should move.`,
+  `- Single-event remove ("take out X") → propose_delete with the eventId.`,
+  `- "Every Saturday X" / "all my X" → propose_delete the MASTER id from the recurring-series block (cascades).`,
+  `- "Change all X to category Y" → ONE propose_change_category per matching event including any recurring master.`,
+  `- Compound "remove X and add Y" → emit BOTH propose_delete AND propose_event.`,
+  `- When the user names a weekday, use the exact date from the day-of-week block. Don't guess.`,
+  `- Be concise. Propose slots rather than asking questions when info is sufficient.`,
+  `- When the user states a new preference ("from now on…"), save_rule.`,
+  ``,
+  `Color hints when auto-creating categories:`,
+  `- Fitness/movement → #22c55e or #84cc16`,
+  `- Learning/research → #dc2626`,
+  `- Social/personal → #ec4899`,
+  `- Admin/chores → #7c7c7c`,
+  `- Creative/work → #0ea5e9`,
+].join("\n");
+
+function dynamicPrompt(ctx: Awaited<ReturnType<typeof buildContext>>): string {
   const tz = ctx.settings?.timezone ?? "America/Toronto";
   const wh = `${ctx.settings?.workdayStart ?? "09:00"}–${ctx.settings?.workdayEnd ?? "18:00"} ${tz}`;
   const now = new Date();
-  const todayLocal = now.toLocaleString("en-US", { timeZone: tz, weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const todayLocal = now.toLocaleString("en-US", {
+    timeZone: tz,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
   return [
-    `You are a scheduling assistant inside a unified calendar app.`,
     `Current time: ${now.toISOString()} (local: ${todayLocal} in ${tz})`,
     `Default working hours: ${wh}`,
     ``,
-    `Week convention:`,
-    `- Weeks run SUNDAY → SATURDAY.`,
-    `- "this week" / "rest of the week" = today through the upcoming Saturday inclusive.`,
-    `- "next week" = the following Sunday → Saturday.`,
-    ``,
-    `User's active scheduling rules (higher priority first):`,
+    `Active scheduling rules (priority desc):`,
     rulesBlock(ctx.rules),
     ``,
-    `Day-of-week reference (use these EXACT dates when the user names a weekday):`,
+    `Day-of-week reference (use these EXACT dates):`,
     weekdayCheatSheet(tz),
     ``,
     `Available calendars:`,
     calendarsBlock(ctx.calendars as unknown as Cal[]),
     ``,
-    `Upcoming non-recurring events (window: 7 days back, 60 days forward):`,
+    `Upcoming non-recurring events (±7d back, +60d forward):`,
     eventsBlock(ctx.nonRecurring as unknown as EventCtx[], tz),
     ``,
-    `Recurring series (use the master id when the user says "all", "every", or "the recurring X"):`,
+    `Recurring series (use master id for "all/every"):`,
     mastersBlock(ctx.masters as unknown as EventCtx[], tz),
-    ``,
-    `Conventions:`,
-    `- Reason about times in the user's LOCAL timezone (${tz}). When emitting start/end in propose_event, output ISO-8601 with the correct offset OR UTC Z form — the UI will display them locally.`,
-    `- Sanity check: if user says "9 AM" they mean 9 AM ${tz}. In May, ${tz} is UTC-4, so 9 AM local = 13:00 UTC. Confirm by checking against the LOCAL strings above before proposing.`,
-    `- NEVER propose a time that overlaps any existing event in the list above. Treat the listed events as immovable unless the user explicitly says to reschedule them.`,
-    `- Respect rules strictly. If a rule conflicts with the user's request, surface the conflict.`,
-    `- Routine/habit-style requests (stretching, reading, journaling, gym, etc.) → use a TASK category. If a fitting task category already exists (case-insensitive substring match on name OR the user's keyword like "SHAI" matches), reuse it. Otherwise call propose_event with newCategoryName + newCategoryColor.`,
-    `- When auto-creating a category, name it after the SUBJECT of the request (e.g. "SHAI Research", "Stretching", "Reading"). Do NOT copy names of existing read-only calendars.`,
-    `- Meeting/appointment requests with specific people → use a SCHEDULING calendar that ISN'T in the DO NOT USE list. If none is suitable, fall back to a task category.`,
-    `- Never propose events on the DO NOT USE calendars.`,
-    `- If multiple recurring instances are needed (e.g. "every weekday at 7am"), use rrule on a single propose_event (FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR, etc.).`,
-    `- For requests like "slot N hours" you may emit multiple propose_event calls — each one is independent.`,
-    `- "during the week when I don't work" = OUTSIDE working hours (before ${ctx.settings?.workdayStart ?? "09:00"}, after ${ctx.settings?.workdayEnd ?? "18:00"}, or weekend). When in doubt, weekday evenings ${ctx.settings?.workdayEnd ?? "18:00"}–22:00 are the safest default.`,
-    `- "during work" / "during my workday" = INSIDE working hours.`,
-    `- When slotting around existing events, scan the upcoming events list for a contiguous gap of the requested length. Don't propose anything that overlaps a listed event.`,
-    `- "Clear my schedule until X" or "I'm doing Y instead, move my stuff": (a) propose_event for the new activity ('Hanging with friends', etc.) over the requested span, choosing or auto-creating an appropriate category, AND (b) for every event in that span, propose_reschedule into the next reasonable free slot — pack tasks before their implied deadlines, prefer the same week if possible, and don't leave them silently dropped.`,
-    `- "What can I do today since X is cancelled" / "maximize my week": look at upcoming non-recurring events as candidate work to pull forward, recommend 2–4 specific items by id, and offer propose_reschedule for any that should move into the freed window.`,
-    `- To remove/cancel events the user mentions ("take out X", "remove Y", "cancel Z", "get rid of"), call propose_delete with the eventId from the events list. Pass the title verbatim so the user can verify.`,
-    `- "Take out all X on Saturdays" or "remove every X" → if X is in the recurring-series block, propose_delete the MASTER id (this removes the whole series). Don't try to delete one instance at a time.`,
-    `- "Change all X to category Y" or "move all X events into category Y" → use propose_change_category. Issue ONE call per matching event (recurring master + each non-recurring instance). Pass either newCalendarId (existing) or newCategoryName (auto-create).`,
-    `- Compound requests like "remove X and add Y" should emit BOTH propose_delete AND propose_event — never silently drop the delete.`,
-    `- When the user says a weekday ("Saturday", "next Friday"), look up the EXACT date in the Day-of-week reference block above and use that. Do NOT guess.`,
-    `- Be concise. If you have enough info, propose slots rather than asking questions.`,
-    `- When the user states a new preference ("from now on...", "always...", "never..."), save_rule.`,
-    ``,
-    `Color hints when auto-creating task categories:`,
-    `- Fitness/movement/stretching → #22c55e or #84cc16 (green)`,
-    `- Learning/research/reading → #dc2626 (red)`,
-    `- Social/personal → #ec4899 (pink)`,
-    `- Admin/chores → #7c7c7c (grey)`,
-    `- Creative/work → #0ea5e9 (blue)`,
   ].join("\n");
 }
 
 async function loadHistory(): Promise<{ role: "user" | "assistant"; content: string }[]> {
-  const rows = await db.chatMessage.findMany({ orderBy: { createdAt: "asc" }, take: 40 });
+  // Trimmed from 40 → 12 to slash input tokens. The system prompt already
+  // carries enough context (rules, events, calendars) that the model rarely
+  // needs more than the last few turns of conversation.
+  const rows = await db.chatMessage.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 12,
+  });
   const msgs: { role: "user" | "assistant"; content: string }[] = [];
-  for (const r of rows) {
+  for (const r of rows.reverse()) {
     if (r.role === "user") msgs.push({ role: "user", content: r.content });
     else if (r.role === "assistant") msgs.push({ role: "assistant", content: r.content });
   }
@@ -424,7 +444,8 @@ const TOOLS: Anthropic.Tool[] = [
 ];
 
 async function backendApi(
-  sys: string,
+  staticSys: string,
+  dynamicSys: string,
   history: { role: "user" | "assistant"; content: string }[],
   userMessage: string,
 ): Promise<RawTurn> {
@@ -438,10 +459,18 @@ async function backendApi(
   ];
 
   const model = pickModel(userMessage);
+  // Two cache breakpoints. The static block is identical across every turn
+  // (and across model switches because we pass the SAME static text), so the
+  // first 2-3K tokens of the prompt cache-hit ~always within the 5min TTL.
+  // The dynamic block changes per turn (current time, events) but still
+  // benefits from caching on quick retries.
   const res = await client.messages.create({
     model,
     max_tokens: 1024,
-    system: [{ type: "text", text: sys, cache_control: { type: "ephemeral" } }],
+    system: [
+      { type: "text", text: staticSys, cache_control: { type: "ephemeral" } },
+      { type: "text", text: dynamicSys, cache_control: { type: "ephemeral" } },
+    ],
     tools: TOOLS,
     messages,
   });
@@ -663,7 +692,7 @@ function runCli(cmd: string, args: string[], timeoutMs: number): Promise<string>
 
 export async function chat(userMessage: string): Promise<AssistantTurn> {
   const ctx = await buildContext();
-  const sys = systemPrompt(ctx);
+  const dynamicSys = dynamicPrompt(ctx);
   const history = await loadHistory();
 
   await db.chatMessage.create({ data: { role: "user", content: userMessage } });
@@ -672,8 +701,8 @@ export async function chat(userMessage: string): Promise<AssistantTurn> {
   let turn: RawTurn;
   try {
     turn = backend === "cli"
-      ? await backendCli(sys, history, userMessage)
-      : await backendApi(sys, history, userMessage);
+      ? await backendCli(`${STATIC_PROMPT}\n\n${dynamicSys}`, history, userMessage)
+      : await backendApi(STATIC_PROMPT, dynamicSys, history, userMessage);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await db.chatMessage.create({
